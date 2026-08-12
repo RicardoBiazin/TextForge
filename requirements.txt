@@ -1,0 +1,30 @@
+# TextForge -- dependencias obrigatorias.
+#
+# Interpretador: Python 3.13. O 3.14 tambem funciona (os wheels do PySide6 sao
+# cp310-abi3, Requires-Python >=3.10,<3.15), mas os hooks de PySide6 do
+# PyInstaller tem muito mais quilometragem no 3.13 e o tratamento de
+# sys._MEIPASS e' historicamente sensivel logo depois de um CPython novo.
+#
+# O .venv fica em c:\Dev\TextForge\.venv e NUNCA no G: -- um venv de PySide6
+# tem ~5 mil arquivos pequenos, o mesmo padrao que faz o Google Drive
+# corromper node_modules com TAR_ENTRY_ERROR/EBADF.
+#
+# Instalar:  .venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# Interface grafica. LGPLv3, compativel com o MIT deste projeto.
+# NAO usar o metapacote 'PySide6': ele arrasta PySide6-Addons, um wheel de
+# 169 MB com QtWebEngine, Qt3D, Charts e Multimedia que nao usamos.
+# -Essentials sao ~78 MB e trazem QtCore, QtGui, QtWidgets e QtNetwork.
+# PyQt6 e QScintilla estao FORA: sao GPL da Riverbank e contaminariam a licenca.
+PySide6-Essentials>=6.9,<7
+
+# Deteccao de encoding. MIT, ao contrario do chardet (LGPL) -- dependencia MIT
+# e' mais limpa num projeto MIT. Puro Python, entao nao atrapalha o PyInstaller.
+charset-normalizer>=3.4,<4
+
+# Formatar/identar SQL. Puro Python, ~200 KB. Import tardio.
+sqlparse>=0.5,<1
+
+# Empacotamento. So' de desenvolvimento; nao vai dentro do .exe. A licenca tem
+# excecao explicita: o binario gerado nao vira GPL.
+pyinstaller>=6.16,<7

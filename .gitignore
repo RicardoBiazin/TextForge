@@ -1,0 +1,32 @@
+# Ambiente virtual. Fica AQUI, em C:\Dev, e nao no G: -- um venv de PySide6 tem
+# ~5 mil arquivos pequenos, o mesmo padrao que faz o Google Drive corromper
+# node_modules com TAR_ENTRY_ERROR/EBADF.
+.venv/
+__pycache__/
+*.py[cod]
+
+# Saida do PyInstaller. O .exe sai como Release, nunca no historico: sao dezenas
+# de MB por versao e um repositorio nao se recupera de binario grande commitado.
+build/
+dist/
+
+# Dados de execucao do usuario. O lugar oficial e' %APPDATA%\TextForge, mas se
+# alguem rodar em modo portatil (config ao lado do executavel), isto evita
+# versionar preferencias, historico de arquivos abertos e caminhos locais.
+config.json
+sessao.json
+sessao.lock
+recuperacao/
+textforge.log
+erro.log
+
+# Arquivos gerados pelos testes. O teste de arquivo grande escreve em
+# %TEMP%\textforge-testes e apaga no fim, mas se alguem apontar para ca':
+tests/dados/
+
+# ATENCAO, divergencia proposital das convencoes dos outros projetos desta
+# maquina: no Sincronizador e no 2pc_1Kit o `*.spec` esta' ignorado, porque la'
+# ele e' GERADO por um empacotar.py. Aqui o TextForge.spec e' VERSIONADO de
+# proposito, junto com versao.txt, icone.ico, splash.png e textforge.manifest,
+# para o build ser reprodutivel numa maquina que nao tenha PIL instalado.
+# Nao acrescente "*.spec" aqui "para ficar igual aos outros" -- quebraria o build.
