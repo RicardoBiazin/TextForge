@@ -13,13 +13,20 @@ from __future__ import annotations
 from textforge.linguagens.registro import REGISTRO, registrar
 
 
-def carregar_embutidos() -> int:
+def carregar_embutidos(*, forcar: bool = False) -> int:
     """Registra os provedores que vem com o programa. Devolve quantos.
 
-    Importacao tardia, dentro da funcao, por dois motivos: um erro num provedor
-    nao impede o programa de abrir, e o custo de compilar os regexes de 15
-    linguagens nao entra no tempo de partida quando nenhuma delas e' usada.
+    IDEMPOTENTE: chamar de novo nao faz nada. Sem essa guarda, cada chamada criaria
+    instancias novas de provedor e descartaria o cache de regexes compilados delas
+    -- e a funcao e' chamada tanto pelo `app.py` quanto pela janela, que garante a
+    propria dependencia em vez de confiar em quem a construiu.
+
+    Importacao tardia, dentro da funcao, por dois motivos: um erro num provedor nao
+    impede o programa de abrir, e o custo de compilar os regexes de 22 linguagens
+    nao entra no tempo de partida quando nenhuma delas e' usada.
     """
+    if REGISTRO.embutidos_carregados and not forcar:
+        return REGISTRO.embutidos_carregados
     from textforge.linguagens import (c_like, css, html, ini_, javascript, json_,
                                       markdown, php, python_, shell, sql, texto,
                                       xml_, yaml_)
@@ -34,6 +41,7 @@ def carregar_embutidos() -> int:
         for provedor in modulo.PROVEDORES:
             registrar(provedor)
             quantos += 1
+    REGISTRO.embutidos_carregados = quantos
     return quantos
 
 

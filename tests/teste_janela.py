@@ -61,11 +61,14 @@ with appdata_temporario():
     checa(janela.vinculos.tem_tratador("buscar.localizar"),
           "'Localizar' esta' ligado a partir da etapa 7")
 
+    checa(janela.vinculos.tem_tratador("formatar.documento"),
+          "'Formatar documento' esta' ligado a partir da etapa 8")
+
     # Um comando de etapa futura tem de aparecer DESABILITADO, e nao escondido:
     # o usuario ve o que o programa vai ter, e nada clicavel finge funcionar.
-    checa(not janela.vinculos.tem_tratador("formatar.documento"),
-          "'Formatar documento' ainda NAO esta' ligado (entra na etapa 8)")
-    qa = janela.vinculos.qacao("formatar.documento")
+    checa(not janela.vinculos.tem_tratador("ferramentas.tabela_csv"),
+          "'Modo tabela (CSV)' ainda NAO esta' ligado (entra na etapa 9)")
+    qa = janela.vinculos.qacao("ferramentas.tabela_csv")
     checa(qa is not None and not qa.isEnabled(),
           "e por isso aparece desabilitado, em vez de fingir funcionar")
 
@@ -409,6 +412,62 @@ with appdata_temporario():
         quarta.barra_de_busca.esconder()
         checa_igual(editor.selecoes.quantas("ocorrencias"), 0,
                     "fechar a barra limpa o realce das ocorrencias")
+
+        # -----------------------------------------------------------------
+        secao("12 - formatar pela janela (etapa 8)")
+
+        # O exemplo LITERAL do requisito 39: abrir o XML compactado e formatar.
+        xml = tmp / "config.xml"
+        xml.write_bytes(
+            b"<config><servidor><ip>192.168.0.10</ip></servidor></config>\r\n")
+        checa(quarta.abrir_arquivo(str(xml)), "abre o XML")
+        checa_igual(quarta.documento.nome_da_linguagem, "XML",
+                    "e a linguagem e' detectada como XML")
+
+        quarta.vinculos.acionar("formatar.documento")
+        texto = quarta.abas.editor_atual().toPlainText()
+        checa("\n    <servidor>" in texto,
+              "'Formatar documento' produz a hierarquia indentada do requisito 39")
+        checa("192.168.0.10" in texto, "e o conteudo sobrevive")
+
+        # UM undo desfaz a formatacao inteira.
+        quarta.abas.editor_atual().undo()
+        checa("\n    <servidor>" not in quarta.abas.editor_atual().toPlainText(),
+              "e UM Ctrl+Z desfaz a formatacao toda")
+        quarta.abas.editor_atual().redo()
+
+        # Validar um XML quebrado abre o painel Problemas e navega ate' o erro.
+        ruim = tmp / "quebrado.xml"
+        ruim.write_bytes(b"<a>\n  <b>\n</a>\n")
+        quarta.abrir_arquivo(str(ruim))
+        quarta.vinculos.acionar("formatar.validar")
+        checa(not quarta.doca_problemas.isHidden(),
+              "validar um XML quebrado abre o painel Problemas")
+        checa(quarta.painel_problemas.arvore.topLevelItemCount() >= 1,
+              "com o problema listado")
+        destino = quarta.painel_problemas.primeiro_erro()
+        checa(destino is not None, "e o problema e' navegavel")
+        checa_igual(quarta.abas.editor_atual().textCursor().blockNumber(), 2,
+                    "o cursor foi para a linha do erro (linha 3, base zero 2)")
+
+        # Validar um XML bom limpa o painel.
+        quarta.abrir_arquivo(str(xml))
+        quarta.vinculos.acionar("formatar.validar")
+        checa("valido" in quarta.painel_problemas.cabecalho.text().lower()
+              or "Nenhum" in quarta.painel_problemas.cabecalho.text(),
+              f"XML valido limpa o painel: "
+              f"{quarta.painel_problemas.cabecalho.text()!r}")
+
+        # JSON com chave duplicada: RECUSA, e o documento NAO e' alterado.
+        jsonf = tmp / "dup.json"
+        jsonf.write_bytes(b'{"a": 1, "a": 2}')
+        quarta.abrir_arquivo(str(jsonf))
+        antes_json = quarta.abas.editor_atual().toPlainText()
+        quarta.vinculos.acionar("formatar.documento")
+        checa_igual(quarta.abas.editor_atual().toPlainText(), antes_json,
+                    "chave duplicada: o documento NAO e' alterado")
+        checa(not quarta.doca_problemas.isHidden(),
+              "e o painel Problemas explica por que")
 
         for aba in quarta.abas.abas():
             aba.documento.qt.setModified(False)

@@ -114,6 +114,10 @@ class ProvedorCss(ProvedorDeLinguagem):
                 linha=numero, coluna=c.start("sel")))
         return achados
 
+    def formatador(self):
+        from textforge.formatadores import de_css
+        return de_css.FORMATADOR
+
     def detectar_por_conteudo(self, amostra: str) -> int:
         pontos = 0
         if re.search(r"[.#]?[\w-]+\s*\{[^}]*[\w-]+\s*:\s*[^;}]+;", amostra):

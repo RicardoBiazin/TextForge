@@ -44,6 +44,11 @@ class Registro:
         self._por_extensao: dict[str, list[ProvedorDeLinguagem]] = {}
         self._por_nome_de_arquivo: dict[str, list[ProvedorDeLinguagem]] = {}
         self._por_nome: dict[str, ProvedorDeLinguagem] = {}
+        # Quantos provedores EMBUTIDOS ja' foram carregados. O estado mora aqui, e
+        # nao num global do modulo, para que `limpar()` o zere junto -- limpar o
+        # registro significa "nada esta' carregado", e um flag em outro lugar
+        # faria o carregamento seguinte virar um no-op silencioso.
+        self.embutidos_carregados = 0
 
     # ==================================================================
     # Registro

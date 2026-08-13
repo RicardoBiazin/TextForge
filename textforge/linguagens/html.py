@@ -199,6 +199,10 @@ class ProvedorHtml(ProvedorDeLinguagem):
                     return raizes
         return raizes
 
+    def formatador(self):
+        from textforge.formatadores import de_html
+        return de_html.FORMATADOR
+
     def detectar_por_conteudo(self, amostra: str) -> int:
         inicio = amostra.lstrip()[:200].lower()
         if inicio.startswith("<!doctype html") or inicio.startswith("<html"):

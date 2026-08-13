@@ -35,6 +35,7 @@ from textforge.interface.barra_de_busca import BarraDeBusca
 from textforge.interface.barra_de_status import BarraDeStatus
 from textforge.interface.menus import Vinculos
 from textforge.interface.painel_estrutura import PainelEstrutura
+from textforge.interface.painel_problemas import PainelProblemas, Problema
 from textforge.interface.painel_resultados import PainelResultados
 from textforge.vigia import Vigia
 
@@ -77,6 +78,11 @@ DIRETO_NO_EDITOR: dict[str, str] = {
 class JanelaPrincipal(QMainWindow):
     def __init__(self, cfg: dict, *, restaurar_sessao: bool = False) -> None:
         super().__init__()
+        # A janela GARANTE a propria dependencia, em vez de confiar que quem a
+        # construiu registrou as linguagens. A chamada e' idempotente.
+        from textforge import linguagens
+        linguagens.carregar_embutidos()
+
         self.cfg = cfg
         self.tema = tema_mod.resolver(cfg.get("tema", "sistema"))
 
@@ -103,6 +109,7 @@ class JanelaPrincipal(QMainWindow):
         # barra de busca embutida, entao vem ANTES do painel Estrutura.
         self._montar_busca()
         self._montar_painel_estrutura()
+        self._montar_painel_problemas()
         self._faixas_da_busca: list[busca.Faixa] = []
 
         self.barra.posicao_clicada.connect(self.ir_para_linha)
@@ -214,6 +221,15 @@ class JanelaPrincipal(QMainWindow):
             # -- linguagem ---------------------------------------------------
             "linguagem.detectar": self.redetectar_linguagem,
             "linguagem.texto": self.usar_texto_puro,
+
+            # -- formatadores (requisito 6) -----------------------------------
+            "formatar.documento": self.formatar_documento,
+            "formatar.selecao": self.formatar_selecao,
+            "formatar.compactar": self.compactar_documento,
+            "formatar.validar": self.validar_documento,
+            "formatar.ir_para_erro": self.ir_para_erro,
+            "formatar.ordenar_chaves": self.formatar_ordenando,
+            "exibir.painel_problemas": self.alternar_painel_problemas,
 
             # -- busca (requisito 8) -----------------------------------------
             "buscar.localizar": lambda: self.abrir_busca(),
@@ -427,7 +443,7 @@ class JanelaPrincipal(QMainWindow):
         self.barra.aplicar_tema(tema)
         self.abas.aplicar_tema(tema)
         for atributo in ("painel_estrutura", "barra_de_busca",
-                         "painel_resultados"):
+                         "painel_resultados", "painel_problemas"):
             widget = getattr(self, atributo, None)
             if widget is not None:
                 widget.aplicar_tema(tema)
@@ -805,6 +821,198 @@ class JanelaPrincipal(QMainWindow):
         self.barra.definir_linguagem(doc.nome_da_linguagem)
         self.barra.definir_aviso(doc.aviso)
         self._atualizar_titulo()
+
+    # ==================================================================
+    # Formatadores (requisito 6)
+    # ==================================================================
+
+    def _montar_painel_problemas(self) -> None:
+        from PySide6.QtWidgets import QDockWidget
+
+        self.painel_problemas = PainelProblemas(self)
+        self.painel_problemas.problema_escolhido.connect(self._ir_para_problema)
+
+        self.doca_problemas = QDockWidget("Problemas", self)
+        self.doca_problemas.setObjectName("docaProblemas")
+        self.doca_problemas.setWidget(self.painel_problemas)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea,
+                           self.doca_problemas)
+        self.doca_problemas.hide()
+
+    def alternar_painel_problemas(self) -> None:
+        self.doca_problemas.setVisible(not self.doca_problemas.isVisible())
+
+    def _ir_para_problema(self, linha: int, coluna: int, posicao) -> None:
+        editor = self.abas.editor_atual()
+        if editor is None:
+            return
+        if posicao is not None:
+            # A posicao ABSOLUTA e' preferida quando existe: leva o cursor ao
+            # caractere exato sem recalcular linha e coluna.
+            from PySide6.QtGui import QTextCursor
+            cursor = editor.textCursor()
+            cursor.setPosition(min(int(posicao),
+                                   editor.document().characterCount() - 1))
+            editor.setTextCursor(cursor)
+            editor.ensureCursorVisible()
+        else:
+            # O painel guarda em base 1 (como o usuario ve); o editor conta de zero.
+            editor.ir_para_linha(max(0, linha - 1), max(0, coluna - 1))
+        editor.setFocus()
+
+    def _formatador_atual(self):
+        doc = self.abas.documento_atual()
+        if doc is None or doc.provedor is None:
+            return None, None
+        return doc.provedor.formatador(), doc
+
+    def _opcoes_de_formatacao(self, doc) -> dict:
+        """As opcoes vem da indentacao DO ARQUIVO, nao da preferencia global.
+
+        Formatar com 4 espacos um arquivo indentado com 2 mudaria toda linha dele --
+        um diff inteiro por causa de uma preferencia.
+        """
+        return {"usa_espacos": doc.indentacao.usa_espacos,
+                "largura": doc.indentacao.largura,
+                "comprimento_de_linha": self.cfg.get("comprimento_de_linha")}
+
+    def _aplicar_saida(self, doc, saida, origem: str, *,
+                       so_selecao: bool = False) -> bool:
+        """Trata os tres desfechos possiveis de um formatador."""
+        from textforge.formatadores.base import ErroDeSintaxe, Recusa, Resultado
+
+        editor = self.abas.editor_atual()
+        if editor is None:
+            return False
+
+        if isinstance(saida, ErroDeSintaxe):
+            problema = Problema.de_erro(saida, origem)
+            self.painel_problemas.mostrar([problema], origem)
+            self.doca_problemas.show()
+            self._ir_para_problema(saida.linha, saida.coluna, saida.posicao)
+            self.barra.showMessage(saida.descrever(), 8000)
+            return False
+
+        if isinstance(saida, Recusa):
+            self.painel_problemas.mostrar([Problema.de_recusa(saida, origem)],
+                                          origem)
+            self.doca_problemas.show()
+            self.barra.showMessage("Formatacao recusada — veja o painel Problemas",
+                                   6000)
+            return False
+
+        if not isinstance(saida, Resultado):
+            return False
+
+        if so_selecao:
+            cursor = editor.textCursor()
+            cursor.beginEditBlock()
+            try:
+                cursor.insertText(saida.texto.rstrip("\n"))
+            finally:
+                cursor.endEditBlock()
+        else:
+            # UM passo de desfazer para o documento inteiro: sem isso, desfazer uma
+            # formatacao exigiria um Ctrl+Z por linha alterada.
+            from PySide6.QtGui import QTextCursor
+            cursor = QTextCursor(editor.document())
+            cursor.select(QTextCursor.SelectionType.Document)
+            cursor.beginEditBlock()
+            try:
+                cursor.insertText(saida.texto)
+            finally:
+                cursor.endEditBlock()
+
+        problemas = [Problema.de_aviso(a, origem) for a in saida.avisos]
+        self.painel_problemas.mostrar(problemas, origem)
+        if problemas:
+            self.doca_problemas.show()
+            self.barra.showMessage(
+                f"Formatado com {len(problemas)} aviso(s) — veja o painel "
+                f"Problemas", 6000)
+        else:
+            self.barra.showMessage(f"Formatado ({origem})", 3000)
+        return True
+
+    def formatar_documento(self) -> None:
+        formatador, doc = self._formatador_atual()
+        if formatador is None:
+            self._sem_formatador(doc)
+            return
+        saida = formatador.formatar(doc.texto(), self._opcoes_de_formatacao(doc))
+        self._aplicar_saida(doc, saida, formatador.nome)
+
+    def formatar_selecao(self) -> None:
+        formatador, doc = self._formatador_atual()
+        if formatador is None:
+            self._sem_formatador(doc)
+            return
+        editor = self.abas.editor_atual()
+        cursor = editor.textCursor() if editor else None
+        if cursor is None or not cursor.hasSelection():
+            dialogos.avisar(self, "Nenhum texto selecionado.",
+                            "Selecione o trecho a formatar, ou use "
+                            "'Formatar documento'.")
+            return
+        trecho = cursor.selectedText().replace(
+            codificacao.SEPARADOR_DE_PARAGRAFO, "\n")
+        saida = formatador.formatar(trecho, self._opcoes_de_formatacao(doc))
+        self._aplicar_saida(doc, saida, formatador.nome, so_selecao=True)
+
+    def compactar_documento(self) -> None:
+        formatador, doc = self._formatador_atual()
+        if formatador is None:
+            self._sem_formatador(doc)
+            return
+        saida = formatador.compactar(doc.texto(), self._opcoes_de_formatacao(doc))
+        self._aplicar_saida(doc, saida, formatador.nome)
+
+    def formatar_ordenando(self) -> None:
+        """Formatar JSON ordenando as propriedades (requisito 6-JSON)."""
+        formatador, doc = self._formatador_atual()
+        if formatador is None or not hasattr(formatador, "formatar_ordenando"):
+            dialogos.avisar(
+                self, "Ordenar propriedades so' vale para JSON.",
+                f"A linguagem atual e' {doc.nome_da_linguagem if doc else '?'}.")
+            return
+        saida = formatador.formatar_ordenando(doc.texto(),
+                                              self._opcoes_de_formatacao(doc))
+        self._aplicar_saida(doc, saida, formatador.nome)
+
+    def validar_documento(self) -> None:
+        """Validar e' comando SEPARADO de formatar.
+
+        Num arquivo grande e invalido o usuario quer o ERRO, e nao esperar uma
+        formatacao que vai falhar de qualquer forma.
+        """
+        formatador, doc = self._formatador_atual()
+        if formatador is None:
+            self._sem_formatador(doc)
+            return
+        erro = formatador.validar(doc.texto())
+        if erro is None:
+            self.painel_problemas.mostrar([], formatador.nome)
+            self.barra.showMessage(f"{formatador.nome} valido", 4000)
+            return
+        self.painel_problemas.mostrar([Problema.de_erro(erro, formatador.nome)],
+                                      formatador.nome)
+        self.doca_problemas.show()
+        self._ir_para_problema(erro.linha, erro.coluna, erro.posicao)
+        self.barra.showMessage(erro.descrever(), 8000)
+
+    def ir_para_erro(self) -> None:
+        destino = self.painel_problemas.primeiro_erro()
+        if destino is None:
+            self.validar_documento()
+            return
+        self._ir_para_problema(*destino)
+
+    def _sem_formatador(self, doc) -> None:
+        nome = doc.nome_da_linguagem if doc is not None else "?"
+        dialogos.avisar(
+            self, f"Nao ha' formatador para {nome}.",
+            "Formatadores disponiveis: XML, JSON, SQL, CSS, HTML e Python. "
+            "Voce pode trocar a linguagem no menu Linguagem.")
 
     # ==================================================================
     # Busca (requisito 8)

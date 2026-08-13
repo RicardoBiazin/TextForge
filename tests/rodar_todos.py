@@ -55,6 +55,9 @@ SUITES = [
     # etapa 7 -- pesquisa
     ("teste_busca.py", "criterio, offsets, substituir todos em 1 undo"),
     ("teste_busca_em_arquivos.py", "varredura, filtros, laco de link, cancelar"),
+    # etapa 8 -- formatadores e seguranca
+    ("teste_seguranca.py", "XXE, billion laughs, varredura estatica do fonte"),
+    ("teste_formatadores.py", "XML/JSON/SQL/CSS/HTML/Python: fidelidade"),
 ]
 
 
