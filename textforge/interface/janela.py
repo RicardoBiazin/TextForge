@@ -31,6 +31,7 @@ from textforge.interface import tema as tema_mod
 from textforge.interface.abas import Aba, GerenciadorAbas
 from textforge.interface.barra_de_status import BarraDeStatus
 from textforge.interface.menus import Vinculos
+from textforge.interface.painel_estrutura import PainelEstrutura
 from textforge.vigia import Vigia
 
 log = log_interno.obter(__name__)
@@ -95,6 +96,7 @@ class JanelaPrincipal(QMainWindow):
         self.abas.posicao_mudou.connect(self.barra.definir_posicao)
         self.abas.selecao_mudou.connect(self.barra.definir_selecao)
         self.setCentralWidget(self.abas)
+        self._montar_painel_estrutura()
 
         self.barra.posicao_clicada.connect(self.ir_para_linha)
         self.barra.indentacao_clicada.connect(self.escolher_tabulacao)
@@ -208,6 +210,8 @@ class JanelaPrincipal(QMainWindow):
 
             # -- navegacao ---------------------------------------------------
             "ir.linha": self.ir_para_linha,
+            "ir.par": self.ir_para_par,
+            "exibir.painel_estrutura": self.alternar_painel_estrutura,
             "marca.proximo": lambda: self._marcador(True),
             "marca.anterior": lambda: self._marcador(False),
 
@@ -406,6 +410,8 @@ class JanelaPrincipal(QMainWindow):
         self._repolir(self)
         self.barra.aplicar_tema(tema)
         self.abas.aplicar_tema(tema)
+        if hasattr(self, "painel_estrutura"):
+            self.painel_estrutura.aplicar_tema(tema)
         log.info("tema aplicado: %s (%s)", tema.nome, tema.tipo)
 
     def _repolir(self, widget: QWidget) -> None:
@@ -465,6 +471,8 @@ class JanelaPrincipal(QMainWindow):
         self.barra.definir_posicao(cursor.blockNumber(),
                                    cursor.positionInBlock())
         self._mostrar_metadados()
+        if self.doca_estrutura.isVisible():
+            self.painel_estrutura.acompanhar(aba.documento)
         editor.setFocus()
 
     def fechar_aba_atual(self) -> None:
@@ -778,6 +786,45 @@ class JanelaPrincipal(QMainWindow):
         self.barra.definir_linguagem(doc.nome_da_linguagem)
         self.barra.definir_aviso(doc.aviso)
         self._atualizar_titulo()
+
+    # ==================================================================
+    # Painel Estrutura (requisito 11)
+    # ==================================================================
+
+    def _montar_painel_estrutura(self) -> None:
+        from PySide6.QtWidgets import QDockWidget
+
+        self.painel_estrutura = PainelEstrutura(self)
+        self.painel_estrutura.linha_escolhida.connect(self._ir_para_da_estrutura)
+
+        self.doca_estrutura = QDockWidget("Estrutura", self)
+        self.doca_estrutura.setObjectName("docaEstrutura")
+        self.doca_estrutura.setWidget(self.painel_estrutura)
+        self.doca_estrutura.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea
+            | Qt.DockWidgetArea.RightDockWidgetArea)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
+                           self.doca_estrutura)
+        # Comeca OCULTO: o painel custa uma analise do documento, e quem nao o usa
+        # nao deve pagar por ele. `restoreState` reabre se o usuario o deixou aberto.
+        self.doca_estrutura.hide()
+
+    def alternar_painel_estrutura(self) -> None:
+        visivel = not self.doca_estrutura.isVisible()
+        self.doca_estrutura.setVisible(visivel)
+        if visivel:
+            self.painel_estrutura.acompanhar(self.abas.documento_atual())
+
+    def _ir_para_da_estrutura(self, linha: int, coluna: int) -> None:
+        editor = self.abas.editor_atual()
+        if editor is not None:
+            editor.ir_para_linha(linha, coluna)
+            editor.setFocus()
+
+    def ir_para_par(self) -> None:
+        editor = self.abas.editor_atual()
+        if editor is not None and not editor.ir_para_par():
+            self.barra.showMessage("Nenhum par correspondente aqui", 2000)
 
     def _atualizar_titulo(self) -> None:
         doc = self.abas.documento_atual()

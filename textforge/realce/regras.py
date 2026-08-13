@@ -43,16 +43,24 @@ class Regra:
     papeis_por_grupo: dict[str, str] = field(default_factory=dict)
     # Empilha um contexto ao casar (abrir uma string tripla, entrar em <?php).
     entrar_em: str | None = None
-    # Desempilha ao casar (fechar a string, ?>).
+    # Desempilha UM nivel ao casar (fechar a string, ?>).
     sair: bool = False
+    # Desempilha ATE' que este contexto seja o topo. Necessario quando a entrada
+    # custou mais de um nivel: `<script src=x>` empilha `tag_de_script` e depois
+    # `corpo_do_script`, entao `</script>` precisa voltar dois niveis de uma vez.
+    # Um `sair` simples deixaria a pilha em `tag_de_script`, e o HTML seguinte
+    # seria realcado como atributo de tag.
+    voltar_para: str | None = None
 
     def __post_init__(self) -> None:
         if not self.papel:
             raise ValueError(f"regra sem papel: {self.padrao.pattern!r}")
-        if self.entrar_em and self.sair:
+        quantas = sum(1 for x in (self.entrar_em, self.sair or None,
+                                  self.voltar_para) if x)
+        if quantas > 1:
             raise ValueError(
-                f"regra nao pode entrar e sair ao mesmo tempo: "
-                f"{self.padrao.pattern!r}")
+                f"regra com mais de uma acao de pilha (entrar_em / sair / "
+                f"voltar_para): {self.padrao.pattern!r}")
 
 
 class Contexto:
@@ -141,11 +149,13 @@ class RegrasDeRealce:
         # highlightBlock, ou seja, no meio do desenho da tela.
         for contexto in self.contextos.values():
             for regra in contexto.regras:
-                if regra.entrar_em and regra.entrar_em not in self.contextos:
-                    raise ValueError(
-                        f"contexto {contexto.nome!r}: a regra "
-                        f"{regra.padrao.pattern!r} entra em "
-                        f"{regra.entrar_em!r}, que nao esta' declarado")
+                for destino, campo in ((regra.entrar_em, "entra em"),
+                                       (regra.voltar_para, "volta para")):
+                    if destino and destino not in self.contextos:
+                        raise ValueError(
+                            f"contexto {contexto.nome!r}: a regra "
+                            f"{regra.padrao.pattern!r} {campo} "
+                            f"{destino!r}, que nao esta' declarado")
 
     def papeis_usados(self) -> set[str]:
         """Todos os papeis citados. O teste confere que o tema declara todos."""
@@ -175,6 +185,39 @@ class RegrasDeRealce:
         return problemas
 
 
+def com_prefixo(contextos: dict[str, Contexto],
+                prefixo: str) -> dict[str, Contexto]:
+    """Renomeia um conjunto de contextos com um prefixo, reescrevendo os saltos.
+
+    E' o mecanismo que faz PHP dentro de HTML, JS em <script> e CSS em <style>
+    funcionarem SEM duplicar regra: `html.py` pede os contextos do PHP com o
+    prefixo "php", e uma correcao no provedor de PHP vale para os dois.
+
+    Reescrever `entrar_em` e' obrigatorio: uma regra do PHP que entra em
+    "comentario" precisa passar a entrar em "php:comentario", senao ela cairia no
+    contexto de comentario do HTML.
+
+    `sair` NAO precisa de reescrita: ele desempilha, e a pilha ja' sabe de onde
+    veio.
+    """
+    saida: dict[str, Contexto] = {}
+    for nome, contexto in contextos.items():
+        regras = tuple(
+            Regra(padrao=regra.padrao, papel=regra.papel,
+                  papeis_por_grupo=dict(regra.papeis_por_grupo),
+                  entrar_em=(f"{prefixo}:{regra.entrar_em}"
+                             if regra.entrar_em else None),
+                  sair=regra.sair,
+                  # `voltar_para` tambem e' renomeado: o destino faz parte do
+                  # conjunto que esta' sendo prefixado.
+                  voltar_para=(f"{prefixo}:{regra.voltar_para}"
+                               if regra.voltar_para else None))
+            for regra in contexto.regras)
+        novo = f"{prefixo}:{nome}"
+        saida[novo] = Contexto(novo, regras, contexto.papel_padrao)
+    return saida
+
+
 # ---------------------------------------------------------------------------
 # Ajudantes de declaracao
 # ---------------------------------------------------------------------------
@@ -194,8 +237,16 @@ def alternativa_de_palavras(palavras, *, limite: bool = True) -> str:
 
 def regra_de_palavras(palavras, papel: str, *,
                       sem_caixa: bool = False) -> Regra:
-    bandeiras = re.IGNORECASE if sem_caixa else 0
-    return Regra(re.compile(alternativa_de_palavras(palavras), bandeiras), papel)
+    """Regra que casa uma lista de palavras.
+
+    `sem_caixa` usa a flag com ESCOPO -- `(?i:...)` -- e nao `re.IGNORECASE` no
+    padrao inteiro. A diferenca importa: as regras de um contexto entram todas no
+    mesmo regex combinado, que tem UM conjunto de bandeiras, entao uma regra com
+    `re.IGNORECASE` no meio de regras sensiveis a caixa e' recusada na construcao.
+    Com escopo, a regra e' componivel em qualquer contexto.
+    """
+    fonte = alternativa_de_palavras(palavras)
+    return Regra(re.compile(f"(?i:{fonte})" if sem_caixa else fonte), papel)
 
 
 # Padroes reaproveitados por varias linguagens. Ficam aqui para uma correcao valer

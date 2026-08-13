@@ -20,12 +20,15 @@ def carregar_embutidos() -> int:
     nao impede o programa de abrir, e o custo de compilar os regexes de 15
     linguagens nao entra no tempo de partida quando nenhuma delas e' usada.
     """
-    from textforge.linguagens import (ini_, json_, markdown, python_, texto,
-                                      xml_)
+    from textforge.linguagens import (c_like, css, html, ini_, javascript, json_,
+                                      markdown, php, python_, shell, sql, texto,
+                                      xml_, yaml_)
 
-    # A ordem nao importa para a resolucao (ela e' por extensao e por prioridade),
-    # mas importa para o menu Linguagem, que segue esta lista.
-    modulos = (texto, python_, json_, xml_, ini_, markdown)
+    # A ordem nao importa para a resolucao (ela e' por extensao e por prioridade).
+    # `php` importa `html`, que importa `javascript` e `css` -- a ordem aqui nao
+    # afeta isso, mas a cadeia esta' anotada para ninguem tentar inverte-la.
+    modulos = (texto, python_, json_, xml_, ini_, markdown, css, javascript,
+               html, php, sql, yaml_, shell, c_like)
     quantos = 0
     for modulo in modulos:
         for provedor in modulo.PROVEDORES:

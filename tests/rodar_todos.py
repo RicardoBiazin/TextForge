@@ -49,6 +49,9 @@ SUITES = [
     # etapa 5 -- realce de sintaxe
     ("teste_realce.py", "regras combinadas, pilha internada, multi-linha"),
     ("teste_linguagens.py", "registro, resolucao, provedores, estrutura"),
+    # etapa 6 -- linguagens embutidas, painel Estrutura, pareamento
+    ("teste_realce_embutido.py", "PHP em HTML, JS/CSS em tag, heredoc, pares"),
+    ("teste_painel_estrutura.py", "arvore, filtro, navegacao, desempenho"),
 ]
 
 

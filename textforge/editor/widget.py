@@ -356,6 +356,7 @@ class EditorDeTexto(QPlainTextEdit):
 
     def _ao_mover_cursor(self) -> None:
         self._realcar_linha_atual()
+        self._realcar_par()
         cursor = self.textCursor()
         # Coluna VISUAL: um TAB nao vale uma coluna, vale ate' a proxima parada
         # de tabulacao. Contar caracteres daria a coluna errada em qualquer
@@ -387,6 +388,74 @@ class EditorDeTexto(QPlainTextEdit):
         cursor.clearSelection()
         selecao.cursor = cursor
         self.selecoes.definir("linha_atual", [selecao])
+
+    # ==================================================================
+    # Pareamento (requisito 14)
+    # ==================================================================
+
+    def _realcar_par(self) -> None:
+        """Destaca o delimitador ou a tag correspondente ao lado do cursor.
+
+        Roda a CADA movimento do cursor, entao tudo aqui e' barato: os
+        delimitadores vem dos `DadosDoBloco` que o realcador ja' gravou, e a busca
+        tem teto de blocos (ver `pareamento.py`).
+        """
+        from textforge.editor import pareamento
+
+        cursor = self.textCursor()
+        try:
+            par = pareamento.casar(self.document(), cursor.blockNumber(),
+                                   cursor.positionInBlock())
+        except Exception:            # noqa: BLE001 - nunca derrubar o cursor
+            self.selecoes.limpar("pares")
+            return
+
+        if par is None:
+            # Sem par: se o cursor esta' SOBRE um delimitador, marca em vermelho --
+            # e' o aviso de parentese nao fechado.
+            solto = pareamento.delimitador_em(
+                self.document(), cursor.blockNumber(), cursor.positionInBlock())
+            if solto is None:
+                self.selecoes.limpar("pares")
+                return
+            _caractere, coluna = solto
+            self.selecoes.definir("pares", [self._marcar(
+                cursor.blockNumber(), coluna, 1, "editor.par_sem_par")])
+            return
+
+        origem, destino = par
+        self.selecoes.definir("pares", [
+            self._marcar(origem.bloco, origem.coluna, origem.tamanho,
+                         "editor.par_casado"),
+            self._marcar(destino.bloco, destino.coluna, destino.tamanho,
+                         "editor.par_casado"),
+        ])
+
+    def _marcar(self, bloco: int, coluna: int, tamanho: int,
+                cor: str) -> QTextEdit.ExtraSelection:
+        selecao = QTextEdit.ExtraSelection()
+        selecao.format.setForeground(self.tema.cor(cor))
+        selecao.format.setFontWeight(QFont.Weight.Bold)
+        alvo = self.document().findBlockByNumber(bloco)
+        cursor = QTextCursor(alvo)
+        cursor.setPosition(alvo.position() + coluna)
+        cursor.setPosition(alvo.position() + coluna + tamanho,
+                           QTextCursor.MoveMode.KeepAnchor)
+        selecao.cursor = cursor
+        return selecao
+
+    def ir_para_par(self) -> bool:
+        """Salta para o delimitador ou a tag correspondente (Ctrl+])."""
+        from textforge.editor import pareamento
+
+        cursor = self.textCursor()
+        par = pareamento.casar(self.document(), cursor.blockNumber(),
+                               cursor.positionInBlock())
+        if par is None:
+            return False
+        _origem, destino = par
+        self.ir_para_linha(destino.bloco, destino.coluna)
+        return True
 
     # ==================================================================
     # Navegacao

@@ -189,6 +189,15 @@ class Pintor(QSyntaxHighlighter):
 
             if regra.entrar_em:
                 pilha = pilha + (regra.entrar_em,)
+            elif regra.voltar_para:
+                # Desempilha ate' o destino ficar no topo. Se ele nao estiver na
+                # pilha (documento malformado), volta ao inicial em vez de zerar:
+                # uma pilha vazia faria o proximo bloco recomecar do zero e
+                # perder o contexto do arquivo.
+                if regra.voltar_para in pilha:
+                    pilha = pilha[:pilha.index(regra.voltar_para) + 1]
+                else:
+                    pilha = pilha[:1]
             elif regra.sair and len(pilha) > 1:
                 pilha = pilha[:-1]
 
