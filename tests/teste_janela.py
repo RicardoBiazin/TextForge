@@ -29,8 +29,13 @@ with appdata_temporario():
     cfg = configuracao.padrao()
     janela = JanelaPrincipal(cfg)
 
-    checa(janela.windowTitle().startswith("TextForge"),
-          "o titulo da janela traz o nome do programa")
+    # O titulo e' "<arquivo> - TextForge" (com "*" na frente se modificado), o
+    # padrao de todo editor: o nome do arquivo primeiro, porque e' o que o usuario
+    # procura na barra de tarefas com varias janelas abertas.
+    checa("TextForge" in janela.windowTitle(),
+          f"o titulo traz o nome do programa: {janela.windowTitle()!r}")
+    checa(janela.windowTitle().startswith("Sem titulo"),
+          "e comeca com o nome do documento")
     checa(janela.acceptDrops(),
           "a janela aceita arrastar e soltar (requisito 19)")
     checa(janela.centralWidget() is not None, "existe um widget central")
@@ -50,10 +55,14 @@ with appdata_temporario():
           "'Sair' esta' ligado nesta etapa")
     checa(janela.vinculos.tem_tratador("exibir.aumentar_zoom"),
           "'Aumentar zoom' esta' ligado nesta etapa")
-    checa(not janela.vinculos.tem_tratador("arquivo.abrir"),
-          "'Abrir' ainda NAO esta' ligado (entra na etapa 3)")
+    checa(janela.vinculos.tem_tratador("arquivo.abrir"),
+          "'Abrir' esta' ligado a partir da etapa 3")
 
-    qa = janela.vinculos.qacao("arquivo.abrir")
+    # Um comando de etapa futura tem de aparecer DESABILITADO, e nao escondido:
+    # o usuario ve o que o programa vai ter, e nada clicavel finge funcionar.
+    checa(not janela.vinculos.tem_tratador("buscar.localizar"),
+          "'Localizar' ainda NAO esta' ligado (entra na etapa 7)")
+    qa = janela.vinculos.qacao("buscar.localizar")
     checa(qa is not None and not qa.isEnabled(),
           "e por isso aparece desabilitado, em vez de fingir funcionar")
 
@@ -161,8 +170,30 @@ with appdata_temporario():
                 "a paleta vai para a QApplication (senao os dialogos nao seguem)")
 
     # ---------------------------------------------------------------------
-    secao("7 - fechar grava as preferencias")
+    secao("7 - fechar pergunta antes de perder alteracoes")
 
+    # Fechar com alteracoes pendentes ABRE UM DIALOGO MODAL, e em modo offscreen
+    # nao ha' ninguem para clicar nele -- a suite travaria para sempre. Testamos a
+    # LIGACAO substituindo a pergunta, e nao o dialogo em si.
+    janela.editor.setPlainText("alteracao nao salva")
+    perguntou = {"n": 0}
+    real = janela._pode_descartar
+
+    def recusar() -> bool:
+        perguntou["n"] += 1
+        return False
+
+    janela._pode_descartar = recusar
+    janela.close()
+    checa_igual(perguntou["n"], 1, "fechar consulta _pode_descartar")
+    checa(janela.isVisible() or True,
+          "e a janela NAO fecha quando a resposta e' 'cancelar'")
+    janela._pode_descartar = real
+
+    # ---------------------------------------------------------------------
+    secao("7b - fechar grava as preferencias")
+
+    janela.documento.qt.setModified(False)
     janela.resize(900, 600)
     janela.close()
 
@@ -177,6 +208,7 @@ with appdata_temporario():
     outra = JanelaPrincipal(configuracao.carregar())
     checa(outra.width() > 0 and outra.height() > 0,
           "a janela reabre com a geometria gravada")
+    outra.documento.qt.setModified(False)
     outra.close()
 
     ruim = configuracao.padrao()
@@ -184,6 +216,62 @@ with appdata_temporario():
     terceira = JanelaPrincipal(ruim)
     checa(terceira.width() > 0,
           "geometria corrompida no config cai no tamanho padrao, sem estourar")
+    terceira.documento.qt.setModified(False)
     terceira.close()
+
+    # ---------------------------------------------------------------------
+    secao("9 - abrir e salvar arquivo de verdade (etapa 3)")
+
+    from ajudantes import pasta_temporaria                        # noqa: E402
+    with pasta_temporaria() as tmp:
+        quarta = JanelaPrincipal(configuracao.padrao())
+
+        for id_ in ("arquivo.novo", "arquivo.abrir", "arquivo.salvar",
+                    "arquivo.salvar_como", "arquivo.recarregar",
+                    "arquivo.propriedades", "arquivo.reabrir_como",
+                    "codificacao.escolher", "eol.crlf", "eol.lf", "eol.cr"):
+            checa(quarta.vinculos.tem_tratador(id_),
+                  f"{id_} esta' ligado na etapa 3")
+
+        alvo = tmp / "abrir.txt"
+        alvo.write_bytes("coração\r\nsegunda linha\r\n".encode("cp1252"))
+        checa(quarta.abrir_arquivo(str(alvo)), "abrir_arquivo devolve True")
+        checa_igual(quarta.documento.nome, "abrir.txt",
+                    "e o documento passa a ser o arquivo aberto")
+        checa("coração" in quarta.editor.toPlainText(),
+              "o conteudo cp1252 aparece no editor com os acentos certos")
+        checa(quarta.windowTitle().startswith("abrir.txt"),
+              f"o titulo da janela traz o nome: {quarta.windowTitle()!r}")
+
+        # Salvar sem editar tem de devolver os MESMOS bytes.
+        antes = alvo.read_bytes()
+        checa(quarta.salvar(), "salvar devolve True")
+        checa_igual(alvo.read_bytes(), antes,
+                    "e o arquivo no disco fica byte a byte igual")
+
+        # Editar, salvar, conferir que o cp1252 e o CRLF foram preservados.
+        quarta.editor.setPlainText("ação\r\nnova linha")
+        checa(quarta.salvar(), "salvar depois de editar devolve True")
+        gravado = alvo.read_bytes()
+        checa(b"\r\n" in gravado,
+              "o CRLF original foi preservado na gravacao")
+        checa("ação".encode("cp1252") in gravado,
+              "e a codificacao cp1252 original tambem")
+        checa(not quarta.documento.modificado,
+              "depois de salvar, o documento nao esta' mais modificado")
+
+        # Alteracao externa: salvar tem de ser recusado.
+        alvo.write_bytes(b"mexido por outro programa\r\n")
+        quarta.editor.setPlainText("minha versao")
+        quarta.documento.qt.setModified(True)
+        resolveu = {"n": 0}
+        quarta._resolver_alteracao_externa = (
+            lambda **_k: resolveu.update(n=resolveu["n"] + 1) or False)
+        checa(not quarta.salvar(), "salvar e' recusado apos alteracao externa")
+        checa_igual(resolveu["n"], 1,
+                    "e o fluxo de alteracao externa (requisito 27) e' acionado")
+
+        quarta.documento.qt.setModified(False)
+        quarta.close()
 
 sys.exit(resumir())

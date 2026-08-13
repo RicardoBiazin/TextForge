@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     servidor = None
     if not args.nova_janela and not args.autoverificacao:
         servidor = instancia_unica.preparar(
-            lambda pedido: log.info("pedido recebido: %r", pedido), janela)
+            lambda pedido: _atender(janela, pedido, log), janela)
         if servidor is not None:
             app.aboutToQuit.connect(servidor.parar)
 
@@ -76,7 +76,26 @@ def main(argv: list[str] | None = None) -> int:
         return _autoverificar(janela, log)
 
     janela.show()
+    # Os arquivos da linha de comando sao abertos DEPOIS do show(): assim a
+    # janela aparece imediatamente e um arquivo grande nao atrasa a partida.
+    for alvo in args.alvos:
+        janela.abrir_arquivo(str(alvo.caminho), alvo.linha, alvo.coluna)
     return app.exec()
+
+
+def _atender(janela, pedido: dict, log) -> None:
+    """Abre os arquivos que outra instancia mandou (o "Abrir com" do Windows)."""
+    log.info("pedido recebido de outra instancia: %d arquivo(s)",
+             len(pedido.get("arquivos", [])))
+    janela.setWindowState(
+        janela.windowState() & ~janela.windowState().__class__.WindowMinimized)
+    janela.raise_()
+    janela.activateWindow()
+    for item in pedido.get("arquivos", []):
+        caminho = item.get("caminho")
+        if caminho:
+            janela.abrir_arquivo(caminho, int(item.get("linha") or 0),
+                                 int(item.get("coluna") or 0))
 
 
 def _autoverificar(janela, log) -> int:

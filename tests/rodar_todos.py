@@ -19,6 +19,10 @@ import sys
 AQUI = os.path.dirname(os.path.abspath(__file__))
 RAIZ = os.path.dirname(AQUI)
 
+# Teto por suite. A mais lenta hoje (instancia unica, que dispara processos
+# filhos) leva ~25 s; 180 s e' folga suficiente e ainda pega um travamento rapido.
+LIMITE_POR_SUITE_S = 180
+
 # (arquivo, descricao). A lista cresce a cada etapa do projeto.
 SUITES = [
     # etapa 0 -- fundacao
@@ -35,6 +39,10 @@ SUITES = [
     ("teste_operacoes_linha.py", "requisito 22 (linhas) e 40 (caixa)"),
     ("teste_editor.py", "margem, linha atual, Tab em bloco, undo, marcadores"),
     ("teste_janela.py", "janela, menus, comandos ligados ao editor"),
+    # etapa 3 -- documento, encoding, gravacao
+    ("teste_codificacao.py", "BOM, cascata, binario, EOL, perdas"),
+    ("teste_documento.py", "round-trip byte a byte, salvar atomico, req. 27"),
+    ("teste_vigia.py", "alteracao externa: watcher + consulta periodica"),
 ]
 
 
@@ -57,9 +65,25 @@ def main() -> int:
             print("%-28s AUSENTE  %s" % (arquivo, descricao))
             quebradas.append((arquivo, "arquivo de teste nao encontrado"))
             continue
-        proc = subprocess.run([sys.executable, "-u", caminho],
-                              capture_output=True, text=True,
-                              errors="replace", env=ambiente, cwd=RAIZ)
+        try:
+            proc = subprocess.run([sys.executable, "-u", caminho],
+                                  capture_output=True, text=True,
+                                  errors="replace", env=ambiente, cwd=RAIZ,
+                                  timeout=LIMITE_POR_SUITE_S)
+        except subprocess.TimeoutExpired as expirou:
+            # Um limite por suite e' obrigatorio num projeto de interface: um
+            # QMessageBox modal aberto sem ninguem para clicar bloqueia PARA
+            # SEMPRE, e sem o limite a rodada inteira ficaria pendurada em vez de
+            # apontar a suite culpada.
+            parcial = (expirou.stdout or "") + (expirou.stderr or "")
+            print("%-28s  TRAVOU apos %ds  [PROBLEMA]  %s"
+                  % (arquivo, LIMITE_POR_SUITE_S, descricao))
+            quebradas.append((arquivo,
+                              "A SUITE TRAVOU. Causa mais comum: um dialogo "
+                              "modal (QMessageBox / QFileDialog) aberto em modo "
+                              "offscreen, onde nao ha' ninguem para fecha-lo.\n"
+                              + parcial))
+            continue
         saida = proc.stdout + proc.stderr
         ok = saida.count("\n  OK   ")
         falhas = saida.count("\n  FALHA")
