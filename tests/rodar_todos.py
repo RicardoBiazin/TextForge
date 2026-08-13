@@ -21,10 +21,16 @@ RAIZ = os.path.dirname(AQUI)
 
 # (arquivo, descricao). A lista cresce a cada etapa do projeto.
 SUITES = [
+    # etapa 0 -- fundacao
     ("teste_configuracao.py", "config.json, pastas de dados, recentes"),
     ("teste_cli.py", "linha de comando, --line, caminhos recusados"),
     ("teste_tarefas.py", "pool, progresso, cancelamento, erro em worker"),
     ("teste_instancia_unica.py", "canal, servidor, entrega de pedido"),
+    # etapa 1 -- fonte de texto e interface
+    ("teste_fonte.py", "a mesma bateria nas 3 implementacoes de FonteDeTexto"),
+    ("teste_acoes.py", "registro de comandos, atalhos, menus, palette"),
+    ("teste_tema.py", "papeis, cores, merge do tema do usuario, contraste"),
+    ("teste_janela.py", "janela sobe, menus montados, zoom, geometria"),
 ]
 
 

@@ -55,6 +55,13 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("TextForge")
     app.setApplicationVersion(__import__("textforge").VERSAO)
 
+    # Fusion, e nao o estilo nativo do Windows. O estilo nativo desenha barra de
+    # menu, barra de status e abas com as cores do SISTEMA e ignora boa parte da
+    # QPalette -- no tema claro o texto do menu saia quase branco sobre fundo
+    # claro, ilegivel. O Fusion honra a paleta inteira, que e' o que torna o
+    # tema customizavel do requisito 28 possivel.
+    app.setStyle("Fusion")
+
     from textforge.interface.janela import JanelaPrincipal
     janela = JanelaPrincipal(cfg)
 
