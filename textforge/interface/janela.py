@@ -22,16 +22,20 @@ from PySide6.QtGui import QCloseEvent, QIcon
 from PySide6.QtWidgets import (QApplication, QFileDialog, QMainWindow,
                                QMessageBox, QToolBar, QWidget)
 
-from textforge import (APP, AUTOR, VERSAO, arquivos, codificacao, configuracao,
-                       log_interno, recursos, sessao as sessao_mod)
+from textforge import (APP, AUTOR, VERSAO, arquivos, busca, codificacao,
+                       configuracao, log_interno, recursos,
+                       sessao as sessao_mod)
+from textforge import busca_em_arquivos as bfa
 from textforge.documento import Documento
 from textforge.editor.indentacao import Indentacao
 from textforge.interface import dialogos
 from textforge.interface import tema as tema_mod
 from textforge.interface.abas import Aba, GerenciadorAbas
+from textforge.interface.barra_de_busca import BarraDeBusca
 from textforge.interface.barra_de_status import BarraDeStatus
 from textforge.interface.menus import Vinculos
 from textforge.interface.painel_estrutura import PainelEstrutura
+from textforge.interface.painel_resultados import PainelResultados
 from textforge.vigia import Vigia
 
 log = log_interno.obter(__name__)
@@ -95,8 +99,11 @@ class JanelaPrincipal(QMainWindow):
         self.abas.titulo_mudou.connect(self._atualizar_titulo)
         self.abas.posicao_mudou.connect(self.barra.definir_posicao)
         self.abas.selecao_mudou.connect(self.barra.definir_selecao)
-        self.setCentralWidget(self.abas)
+        # `_montar_busca` troca o widget central por um container com as abas e a
+        # barra de busca embutida, entao vem ANTES do painel Estrutura.
+        self._montar_busca()
         self._montar_painel_estrutura()
+        self._faixas_da_busca: list[busca.Faixa] = []
 
         self.barra.posicao_clicada.connect(self.ir_para_linha)
         self.barra.indentacao_clicada.connect(self.escolher_tabulacao)
@@ -207,6 +214,15 @@ class JanelaPrincipal(QMainWindow):
             # -- linguagem ---------------------------------------------------
             "linguagem.detectar": self.redetectar_linguagem,
             "linguagem.texto": self.usar_texto_puro,
+
+            # -- busca (requisito 8) -----------------------------------------
+            "buscar.localizar": lambda: self.abrir_busca(),
+            "buscar.substituir": lambda: self.abrir_busca(com_substituicao=True),
+            "buscar.proximo": lambda: self._repetir_busca(False),
+            "buscar.anterior": lambda: self._repetir_busca(True),
+            "buscar.em_arquivos": self.pesquisar_em_arquivos,
+            "buscar.contar": self.contar_ocorrencias,
+            "buscar.selecionar_ocorrencias": self.selecionar_ocorrencias,
 
             # -- navegacao ---------------------------------------------------
             "ir.linha": self.ir_para_linha,
@@ -410,8 +426,11 @@ class JanelaPrincipal(QMainWindow):
         self._repolir(self)
         self.barra.aplicar_tema(tema)
         self.abas.aplicar_tema(tema)
-        if hasattr(self, "painel_estrutura"):
-            self.painel_estrutura.aplicar_tema(tema)
+        for atributo in ("painel_estrutura", "barra_de_busca",
+                         "painel_resultados"):
+            widget = getattr(self, atributo, None)
+            if widget is not None:
+                widget.aplicar_tema(tema)
         log.info("tema aplicado: %s (%s)", tema.nome, tema.tipo)
 
     def _repolir(self, widget: QWidget) -> None:
@@ -786,6 +805,304 @@ class JanelaPrincipal(QMainWindow):
         self.barra.definir_linguagem(doc.nome_da_linguagem)
         self.barra.definir_aviso(doc.aviso)
         self._atualizar_titulo()
+
+    # ==================================================================
+    # Busca (requisito 8)
+    # ==================================================================
+
+    def _montar_busca(self) -> None:
+        from PySide6.QtWidgets import QDockWidget, QVBoxLayout, QWidget
+
+        self.barra_de_busca = BarraDeBusca(self)
+        self.barra_de_busca.procurar.connect(self._procurar)
+        self.barra_de_busca.procurar_incremental.connect(self._procurar_ao_digitar)
+        self.barra_de_busca.substituir_atual.connect(self._substituir_atual)
+        self.barra_de_busca.substituir_tudo.connect(self._substituir_tudo)
+        self.barra_de_busca.fechada.connect(self._limpar_realce_de_busca)
+
+        # A barra fica ENTRE o editor e a barra de status, e nao numa doca: ela
+        # pertence ao documento que esta' sendo editado, e uma doca poderia ser
+        # arrastada para longe dele.
+        centro = QWidget(self)
+        layout = QVBoxLayout(centro)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.abas, 1)
+        layout.addWidget(self.barra_de_busca)
+        self.setCentralWidget(centro)
+
+        self.painel_resultados = PainelResultados(self)
+        self.painel_resultados.resultado_escolhido.connect(
+            self._abrir_resultado)
+        self.painel_resultados.cancelar_pedido.connect(self._cancelar_busca)
+
+        self.doca_resultados = QDockWidget("Resultados da pesquisa", self)
+        self.doca_resultados.setObjectName("docaResultados")
+        self.doca_resultados.setWidget(self.painel_resultados)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea,
+                           self.doca_resultados)
+        self.doca_resultados.hide()
+        self._tarefa_de_busca = None
+
+    def abrir_busca(self, *, com_substituicao: bool = False) -> None:
+        editor = self.abas.editor_atual()
+        inicial = ""
+        if editor is not None:
+            cursor = editor.textCursor()
+            if cursor.hasSelection():
+                selecionado = cursor.selectedText()
+                # Selecao de varias linhas nao serve como termo de busca: o U+2029
+                # do Qt nunca casaria com nada digitavel.
+                if codificacao.SEPARADOR_DE_PARAGRAFO not in selecionado:
+                    inicial = selecionado
+        self.barra_de_busca.mostrar(com_substituicao=com_substituicao,
+                                    texto_inicial=inicial)
+
+    def _repetir_busca(self, para_tras: bool) -> None:
+        """F3 / Shift+F3. Abre a barra se ela estiver fechada.
+
+        Repetir a busca sem ter buscado antes NAO deve ser um erro: o gesto natural
+        e' selecionar uma palavra e apertar F3.
+        """
+        criterio = self.barra_de_busca.criterio()
+        if criterio.vazio:
+            self.abrir_busca()
+            return
+        self._procurar(criterio, para_tras)
+
+    def _criterio_valido(self, criterio: busca.Criterio):
+        """Compila o criterio, mostrando o erro na propria barra."""
+        if criterio.vazio:
+            self.barra_de_busca.definir_contador(0, 0)
+            return None
+        try:
+            criterio.compilar()
+        except busca.CriterioInvalido as exc:
+            # Regex invalida e' o estado NORMAL enquanto o usuario digita "(\d+".
+            # O aviso vai para a barra, e nunca para um dialogo.
+            self.barra_de_busca.definir_contador(0, 0, erro=str(exc))
+            self._limpar_realce_de_busca()
+            return None
+        return criterio
+
+    def _procurar_ao_digitar(self, criterio: busca.Criterio) -> None:
+        """Atualiza contador e realce de todas as ocorrencias, sem mover o cursor."""
+        editor = self.abas.editor_atual()
+        if editor is None or self._criterio_valido(criterio) is None:
+            return
+        faixas, cortado = busca.todas_no_documento(editor.document(), criterio)
+        self._faixas_da_busca = faixas
+        self._realcar_ocorrencias(editor, faixas)
+        atual = busca.ordinal(faixas, editor.textCursor().selectionStart())
+        self.barra_de_busca.definir_contador(atual, len(faixas))
+        if cortado:
+            self.barra.showMessage(
+                f"Mais de {len(faixas)} ocorrencias: o realce foi limitado", 4000)
+
+    def _procurar(self, criterio: busca.Criterio, para_tras: bool) -> None:
+        editor = self.abas.editor_atual()
+        if editor is None or self._criterio_valido(criterio) is None:
+            return
+        cursor = editor.textCursor()
+        # Partir do FIM da selecao ao avancar e do INICIO ao voltar: senao o F3
+        # acharia de novo a ocorrencia que ja' esta' selecionada.
+        origem = cursor.selectionStart() if para_tras else cursor.selectionEnd()
+        faixa = busca.achar(editor.document(), criterio, origem,
+                            para_tras=para_tras)
+        if faixa is None:
+            self.barra.showMessage(
+                f"Nao encontrado: {criterio.descricao()}", 3000)
+            self.barra_de_busca.definir_contador(0, 0)
+            return
+        self._selecionar_faixa(editor, faixa)
+        faixas, _ = busca.todas_no_documento(editor.document(), criterio)
+        self._faixas_da_busca = faixas
+        self._realcar_ocorrencias(editor, faixas, atual=faixa)
+        self.barra_de_busca.definir_contador(
+            busca.ordinal(faixas, faixa.inicio), len(faixas))
+
+    def _selecionar_faixa(self, editor, faixa: busca.Faixa) -> None:
+        from PySide6.QtGui import QTextCursor
+
+        cursor = editor.textCursor()
+        cursor.setPosition(faixa.inicio)
+        cursor.setPosition(faixa.fim, QTextCursor.MoveMode.KeepAnchor)
+        editor.setTextCursor(cursor)
+        editor.ensureCursorVisible()
+
+    def _realcar_ocorrencias(self, editor, faixas: list[busca.Faixa],
+                             atual: busca.Faixa | None = None) -> None:
+        """Pinta todas as ocorrencias, e a atual numa cor propria.
+
+        Sao DUAS camadas de selecao (ver `selecoes.py`): a ordem de pintura
+        declarada la' garante que a atual apareca sobre as demais.
+        """
+        from PySide6.QtGui import QTextCursor
+        from PySide6.QtWidgets import QTextEdit
+
+        def marcar(faixa: busca.Faixa, cor: str) -> QTextEdit.ExtraSelection:
+            selecao = QTextEdit.ExtraSelection()
+            selecao.format.setBackground(editor.tema.cor(cor))
+            cursor = QTextCursor(editor.document())
+            cursor.setPosition(faixa.inicio)
+            cursor.setPosition(faixa.fim, QTextCursor.MoveMode.KeepAnchor)
+            selecao.cursor = cursor
+            return selecao
+
+        editor.selecoes.definir(
+            "ocorrencias", [marcar(f, "editor.ocorrencia") for f in faixas])
+        editor.selecoes.definir(
+            "ocorrencia_atual",
+            [marcar(atual, "editor.ocorrencia_atual")] if atual else [])
+
+    def _limpar_realce_de_busca(self) -> None:
+        self._faixas_da_busca = []
+        for aba in self.abas.abas():
+            aba.editor.selecoes.limpar("ocorrencias")
+            aba.editor.selecoes.limpar("ocorrencia_atual")
+
+    def _substituir_atual(self, criterio: busca.Criterio,
+                          substituicao: str) -> None:
+        editor = self.abas.editor_atual()
+        if editor is None or self._criterio_valido(criterio) is None:
+            return
+        cursor = editor.textCursor()
+        faixa = busca.achar(editor.document(), criterio, cursor.selectionStart())
+        if faixa is None:
+            self.barra.showMessage("Nao encontrado", 2000)
+            return
+        # Se a selecao atual NAO e' o casamento, apenas vai para ele: substituir
+        # algo que o usuario nao esta' vendo e' o caminho mais curto para uma
+        # alteracao que ele nao pediu.
+        if (cursor.selectionStart(), cursor.selectionEnd()) != (faixa.inicio,
+                                                               faixa.fim):
+            self._selecionar_faixa(editor, faixa)
+            return
+        try:
+            busca.substituir_uma(editor.document(), faixa, substituicao, criterio)
+        except busca.CriterioInvalido as exc:
+            dialogos.avisar(self, "Substituicao invalida.", str(exc))
+            return
+        self._procurar(criterio, False)
+
+    def _substituir_tudo(self, criterio: busca.Criterio, substituicao: str,
+                         so_na_selecao: bool) -> None:
+        editor = self.abas.editor_atual()
+        if editor is None or self._criterio_valido(criterio) is None:
+            return
+        limite = None
+        if so_na_selecao:
+            cursor = editor.textCursor()
+            if not cursor.hasSelection():
+                dialogos.avisar(self, "Nenhum texto selecionado.",
+                                "Marque 'Na selecao' apenas com texto selecionado.")
+                return
+            limite = (cursor.selectionStart(), cursor.selectionEnd())
+        try:
+            quantas = busca.substituir_todos(editor.document(), criterio,
+                                             substituicao,
+                                             limite_da_selecao=limite)
+        except busca.CriterioInvalido as exc:
+            dialogos.avisar(self, "Substituicao invalida.", str(exc))
+            return
+        self.barra.showMessage(
+            f"{quantas} ocorrencia(s) substituida(s) — um Ctrl+Z desfaz tudo",
+            5000)
+        self._procurar_ao_digitar(criterio)
+
+    def contar_ocorrencias(self) -> None:
+        """Conta as ocorrencias da selecao (requisito 40)."""
+        editor = self.abas.editor_atual()
+        if editor is None:
+            return
+        cursor = editor.textCursor()
+        if not cursor.hasSelection():
+            dialogos.avisar(self, "Selecione o texto a contar.")
+            return
+        criterio = busca.Criterio(texto=cursor.selectedText())
+        faixas, cortado = busca.todas_no_documento(editor.document(), criterio)
+        sufixo = " (lista cortada)" if cortado else ""
+        self.barra.showMessage(
+            f'"{criterio.texto[:40]}": {len(faixas)} ocorrencia(s){sufixo}', 6000)
+        self._realcar_ocorrencias(editor, faixas)
+
+    def selecionar_ocorrencias(self) -> None:
+        """Seleciona todas as ocorrencias da selecao (requisito 40).
+
+        Sem multi-cursor ainda, o que se pode fazer de util e' REALCAR todas e levar
+        o cursor a' primeira -- e dizer quantas. Prometer "selecionar" e mover
+        apenas o cursor seria pior que ser explicito.
+        """
+        self.contar_ocorrencias()
+
+    # ==================================================================
+    # Pesquisar em arquivos (requisito 8)
+    # ==================================================================
+
+    def pesquisar_em_arquivos(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        editor = self.abas.editor_atual()
+        termo = ""
+        if editor is not None and editor.textCursor().hasSelection():
+            termo = editor.textCursor().selectedText()
+        termo = dialogos.pedir_texto(self, "Pesquisar em arquivos",
+                                     "Texto a procurar:", termo)
+        if not termo:
+            return
+
+        doc = self.abas.documento_atual()
+        sugestao = str(doc.caminho.parent) if (doc and doc.caminho) else ""
+        pasta = QFileDialog.getExistingDirectory(
+            self, "Pesquisar em qual pasta?", sugestao)
+        if not pasta:
+            return
+
+        filtros = dialogos.pedir_texto(
+            self, "Filtros", "Extensoes (ex.: *.php *.py *.xml):", "*")
+        if filtros is None:
+            return
+
+        criterio = busca.Criterio(texto=termo)
+        self._iniciar_busca_em_arquivos(pasta, criterio,
+                                       bfa.filtros_de(filtros))
+
+    def _iniciar_busca_em_arquivos(self, pasta: str, criterio: busca.Criterio,
+                                   filtros: list[str]) -> None:
+        from textforge import tarefas
+
+        self._cancelar_busca()
+        self.doca_resultados.show()
+        self.painel_resultados.comecar(criterio.descricao(), pasta)
+
+        tarefa = bfa.montar_tarefa(pasta, criterio, filtros)
+        tarefa.sinais.concluido.connect(self._busca_concluida)
+        tarefa.sinais.cancelado.connect(self.painel_resultados.cancelado)
+        tarefa.sinais.erro.connect(self.painel_resultados.falhou)
+        tarefa.sinais.mensagem.connect(
+            lambda p: self.painel_resultados.progresso(0, p))
+        tarefa.sinais.progresso.connect(
+            lambda feito, _t: self.barra.mostrar_progresso(feito, -1))
+        tarefa.sinais.terminou.connect(self.barra.esconder_progresso)
+        self._tarefa_de_busca = tarefa
+        # `disco=True`: e' I/O de arquivo, e nao deve competir com a CPU do realce.
+        tarefas.rodar(tarefa, disco=True)
+
+    def _busca_concluida(self, resultado) -> None:
+        if not resultado:
+            return
+        achados, resumo = resultado
+        self.painel_resultados.acrescentar(achados)
+        self.painel_resultados.terminar(resumo)
+        self._tarefa_de_busca = None
+
+    def _cancelar_busca(self) -> None:
+        if self._tarefa_de_busca is not None:
+            self._tarefa_de_busca.cancelar()
+            self._tarefa_de_busca = None
+
+    def _abrir_resultado(self, caminho: str, linha: int, coluna: int) -> None:
+        self.abrir_arquivo(caminho, linha, coluna)
 
     # ==================================================================
     # Painel Estrutura (requisito 11)

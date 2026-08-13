@@ -52,6 +52,9 @@ SUITES = [
     # etapa 6 -- linguagens embutidas, painel Estrutura, pareamento
     ("teste_realce_embutido.py", "PHP em HTML, JS/CSS em tag, heredoc, pares"),
     ("teste_painel_estrutura.py", "arvore, filtro, navegacao, desempenho"),
+    # etapa 7 -- pesquisa
+    ("teste_busca.py", "criterio, offsets, substituir todos em 1 undo"),
+    ("teste_busca_em_arquivos.py", "varredura, filtros, laco de link, cancelar"),
 ]
 
 

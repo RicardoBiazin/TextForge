@@ -58,11 +58,14 @@ with appdata_temporario():
     checa(janela.vinculos.tem_tratador("arquivo.abrir"),
           "'Abrir' esta' ligado a partir da etapa 3")
 
+    checa(janela.vinculos.tem_tratador("buscar.localizar"),
+          "'Localizar' esta' ligado a partir da etapa 7")
+
     # Um comando de etapa futura tem de aparecer DESABILITADO, e nao escondido:
     # o usuario ve o que o programa vai ter, e nada clicavel finge funcionar.
-    checa(not janela.vinculos.tem_tratador("buscar.localizar"),
-          "'Localizar' ainda NAO esta' ligado (entra na etapa 7)")
-    qa = janela.vinculos.qacao("buscar.localizar")
+    checa(not janela.vinculos.tem_tratador("formatar.documento"),
+          "'Formatar documento' ainda NAO esta' ligado (entra na etapa 8)")
+    qa = janela.vinculos.qacao("formatar.documento")
     checa(qa is not None and not qa.isEnabled(),
           "e por isso aparece desabilitado, em vez de fingir funcionar")
 
@@ -77,8 +80,16 @@ with appdata_temporario():
 
     from textforge.editor.widget import EditorDeTexto             # noqa: E402
     from textforge.interface.abas import GerenciadorAbas          # noqa: E402
-    checa(isinstance(janela.centralWidget(), GerenciadorAbas),
-          "o widget central e' o gerenciador de abas")
+    # O widget central e' um container com as abas MAIS a barra de busca
+    # embutida. A barra fica ali, e nao numa doca, porque pertence ao documento
+    # que esta' sendo editado -- uma doca poderia ser arrastada para longe dele.
+    checa(janela.abas.parent() is not None
+          and janela.centralWidget() is not None,
+          "o widget central hospeda as abas e a barra de busca")
+    checa(isinstance(janela.abas, GerenciadorAbas),
+          "e janela.abas e' o gerenciador de abas")
+    checa(janela.barra_de_busca.isHidden(),
+          "a barra de busca comeca oculta (Ctrl+F a abre)")
     checa(isinstance(janela.editor, EditorDeTexto),
           "e janela.editor aponta para o editor da aba ativa")
     checa_igual(janela.abas.count(), 1,
@@ -322,6 +333,82 @@ with appdata_temporario():
         quarta.nova_aba()
         checa_igual(len(quarta._capturar_sessao().abas), 2,
                     "aba 'Sem titulo' NAO entra na sessao")
+
+        # -----------------------------------------------------------------
+        secao("11 - busca pela janela (etapa 7)")
+
+        quarta.nova_aba()
+        editor = quarta.abas.editor_atual()
+        editor.setPlainText("alfa beta alfa gama alfa")
+
+        quarta.abrir_busca()
+        checa(not quarta.barra_de_busca.isHidden(),
+              "Ctrl+F abre a barra de busca")
+
+        quarta.barra_de_busca.campo.setText("alfa")
+        from textforge.busca import Criterio                       # noqa: E402
+        criterio = Criterio(texto="alfa")
+
+        quarta._procurar_ao_digitar(criterio)
+        # O cursor esta' na posicao 0, que E' o inicio da primeira ocorrencia --
+        # entao o contador ja' sabe QUAL delas e' e mostra "1 de 3", que e' mais
+        # informativo que o total solto.
+        checa_igual(quarta.barra_de_busca.contador.text(), "1 de 3",
+                    "o contador mostra 'N de total' quando o cursor esta' "
+                    "sobre uma ocorrencia")
+        checa_igual(editor.selecoes.quantas("ocorrencias"), 3,
+                    "e as tres ocorrencias sao realcadas")
+
+        # Com o cursor FORA de qualquer ocorrencia, mostra apenas o total.
+        cursor_meio = editor.textCursor()
+        cursor_meio.setPosition(6)          # dentro de "beta"
+        editor.setTextCursor(cursor_meio)
+        quarta._procurar_ao_digitar(criterio)
+        checa_igual(quarta.barra_de_busca.contador.text(), "3 achado(s)",
+                    "e mostra so' o total quando o cursor nao esta' em nenhuma")
+
+        # Volta o cursor ao inicio para a sequencia de F3 comecar do primeiro.
+        inicio = editor.textCursor()
+        inicio.setPosition(0)
+        editor.setTextCursor(inicio)
+
+        quarta._procurar(criterio, False)
+        checa_igual(editor.textCursor().selectedText(), "alfa",
+                    "F3 seleciona a ocorrencia")
+        checa_igual(quarta.barra_de_busca.contador.text(), "1 de 3",
+                    "e o contador mostra '1 de 3'")
+        quarta._procurar(criterio, False)
+        checa_igual(quarta.barra_de_busca.contador.text(), "2 de 3",
+                    "o F3 seguinte avanca para '2 de 3'")
+        quarta._procurar(criterio, False)
+        checa_igual(quarta.barra_de_busca.contador.text(), "3 de 3",
+                    "e depois para '3 de 3'")
+        quarta._procurar(criterio, False)
+        checa_igual(quarta.barra_de_busca.contador.text(), "1 de 3",
+                    "passando da ultima, circula para a primeira (como todo F3)")
+        quarta._procurar(criterio, True)
+        checa_igual(quarta.barra_de_busca.contador.text(), "3 de 3",
+                    "e Shift+F3 do inicio circula para a ultima")
+
+        # Regex invalida NAO abre dialogo: e' o estado normal enquanto se digita.
+        ruim = Criterio(texto="(\\d+", expressao_regular=True)
+        quarta._procurar_ao_digitar(ruim)
+        checa_igual(quarta.barra_de_busca.contador.text(), "regex invalida",
+                    "regex incompleta avisa na barra, sem dialogo modal")
+        checa(quarta.barra_de_busca.campo.toolTip(),
+              "e a mensagem do erro fica na dica do campo")
+
+        # Substituir todos pela janela.
+        quarta._substituir_tudo(criterio, "OMEGA", False)
+        checa_igual(editor.toPlainText(), "OMEGA beta OMEGA gama OMEGA",
+                    "'Substituir todos' pela janela troca as tres")
+        editor.undo()
+        checa_igual(editor.toPlainText(), "alfa beta alfa gama alfa",
+                    "e UM Ctrl+Z desfaz tudo")
+
+        quarta.barra_de_busca.esconder()
+        checa_igual(editor.selecoes.quantas("ocorrencias"), 0,
+                    "fechar a barra limpa o realce das ocorrencias")
 
         for aba in quarta.abas.abas():
             aba.documento.qt.setModified(False)
