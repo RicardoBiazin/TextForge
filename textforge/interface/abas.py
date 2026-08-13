@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (QApplication, QMenu, QStackedWidget, QTabBar,
 from textforge import arquivos, log_interno
 from textforge.documento import Documento
 from textforge.editor.widget import EditorDeTexto
+from textforge.realce.pintor import Pintor
 
 log = log_interno.obter(__name__)
 
@@ -60,6 +61,13 @@ class Aba(QWidget):
         # aqui, e a troca de modo passa a ser uma linha.
         self._views: dict[str, QWidget] = {"texto": self.editor}
 
+        # O realcador e' anexado ao QTextDocument, e nao ao editor: e' o documento
+        # que tem o conteudo, e e' assim que um Split View (dois editores no mesmo
+        # documento) compartilharia um realce so'.
+        self.pintor = Pintor(documento.qt, documento.provedor, tema, cfg)
+        # O editor precisa do provedor para o auto-indent (`aumenta_indentacao`).
+        self.editor.provedor = documento.provedor
+
     def _pedir_menu(self, ponto: QPoint) -> None:
         gerenciador = self.parent()
         montar = getattr(gerenciador, "montar_menu_do_editor", None)
@@ -90,10 +98,22 @@ class Aba(QWidget):
 
     def aplicar_tema(self, tema) -> None:
         self.editor.aplicar_tema(tema)
+        self.pintor.definir_tema(tema)
 
     def aplicar_configuracao(self, cfg: dict) -> None:
         self.cfg = cfg
         self.editor.aplicar_configuracao(cfg)
+        self.pintor.definir_configuracao(cfg)
+
+    def definir_provedor(self, provedor) -> None:
+        """Troca a linguagem desta aba."""
+        self.documento.provedor = provedor
+        self.editor.provedor = provedor
+        self.pintor.definir_provedor(provedor)
+        if provedor is not None and self.cfg.get("detectar_indentacao", True):
+            # A indentacao do ARQUIVO continua mandando; o provedor so' entra
+            # quando o arquivo nao revelou nada (ver `indentacao.detectar`).
+            pass
 
 
 class GerenciadorAbas(QTabWidget):

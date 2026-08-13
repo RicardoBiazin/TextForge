@@ -46,6 +46,9 @@ SUITES = [
     # etapa 4 -- abas, sessao, recuperacao
     ("teste_abas.py", "identidade por arquivo, asterisco, menu de contexto"),
     ("teste_sessao.py", "sessao, trava por rename, recuperacao com codec"),
+    # etapa 5 -- realce de sintaxe
+    ("teste_realce.py", "regras combinadas, pilha internada, multi-linha"),
+    ("teste_linguagens.py", "registro, resolucao, provedores, estrutura"),
 ]
 
 

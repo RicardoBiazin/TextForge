@@ -111,6 +111,8 @@ class JanelaPrincipal(QMainWindow):
         self.vinculos.registrar_atalhos_sem_menu()
         self.vinculos.sincronizar_alternaveis(cfg)
         self._montar_menu_de_recentes()
+        self._montar_menu_de_linguagens()
+        self.barra.linguagem_clicada.connect(self.escolher_linguagem)
 
         self.aplicar_tema(self.tema)
         self.ferramentas.setVisible(
@@ -200,6 +202,10 @@ class JanelaPrincipal(QMainWindow):
             "linha.prefixar": self.prefixar_linhas,
             "linha.sufixar": self.sufixar_linhas,
 
+            # -- linguagem ---------------------------------------------------
+            "linguagem.detectar": self.redetectar_linguagem,
+            "linguagem.texto": self.usar_texto_puro,
+
             # -- navegacao ---------------------------------------------------
             "ir.linha": self.ir_para_linha,
             "marca.proximo": lambda: self._marcador(True),
@@ -249,6 +255,92 @@ class JanelaPrincipal(QMainWindow):
             ligacoes[id_] = (lambda f=funcao: self._converter_caixa(f))
 
         self.vinculos.ligar_muitos(ligacoes)
+
+    def _montar_menu_de_linguagens(self) -> None:
+        """Preenche o menu Linguagem com os provedores registrados.
+
+        Reconstruido a cada abertura do menu, para refletir o provedor da aba
+        atual com a marca de selecao -- e para um plugin que registre uma
+        linguagem em tempo de execucao aparecer sem reiniciar o programa.
+        """
+        menu = self._menu_da_barra("Linguagem")
+        if menu is None:
+            return
+        self._menu_linguagem = menu
+        menu.aboutToShow.connect(self._preencher_linguagens)
+
+    def _menu_da_barra(self, titulo: str):
+        for acao in self.menuBar().actions():
+            if acao.text().replace("&", "") == titulo:
+                return acao.menu()
+        return None
+
+    def _preencher_linguagens(self) -> None:
+        from textforge.linguagens import REGISTRO
+
+        menu = self._menu_linguagem
+        menu.clear()
+        doc = self.abas.documento_atual()
+        atual = doc.nome_da_linguagem if doc else ""
+
+        acao = menu.addAction("Detectar automaticamente")
+        acao.triggered.connect(self.redetectar_linguagem)
+        acao.setEnabled(bool(doc) and doc.linguagem_manual)
+        menu.addSeparator()
+
+        for provedor in sorted(REGISTRO.todos(), key=lambda p: p.nome.lower()):
+            item = menu.addAction(provedor.nome)
+            item.setCheckable(True)
+            item.setChecked(provedor.nome == atual)
+            extensoes = " ".join(provedor.extensoes[:6])
+            if extensoes:
+                item.setToolTip(extensoes)
+            item.triggered.connect(
+                lambda _c=False, p=provedor: self.definir_linguagem(p))
+
+    def definir_linguagem(self, provedor) -> None:
+        aba = self.abas.aba_atual()
+        if aba is None:
+            return
+        aba.documento.definir_linguagem(provedor)
+        aba.definir_provedor(provedor)
+        self._mostrar_metadados()
+        self.barra.showMessage(f"Linguagem: {provedor.nome}", 2000)
+
+    def redetectar_linguagem(self) -> None:
+        aba = self.abas.aba_atual()
+        if aba is None:
+            return
+        aba.documento.detectar_linguagem()
+        aba.definir_provedor(aba.documento.provedor)
+        self._mostrar_metadados()
+        self.barra.showMessage(
+            f"Linguagem detectada: {aba.documento.nome_da_linguagem}", 2000)
+
+    def usar_texto_puro(self) -> None:
+        from textforge.linguagens import REGISTRO
+
+        provedor = REGISTRO.de_texto()
+        if provedor is not None:
+            self.definir_linguagem(provedor)
+
+    def escolher_linguagem(self) -> None:
+        """Clique no campo de linguagem da barra de status."""
+        from textforge.linguagens import REGISTRO
+
+        nomes = sorted(p.nome for p in REGISTRO.todos())
+        if not nomes:
+            return
+        doc = self.abas.documento_atual()
+        atual = doc.nome_da_linguagem if doc else ""
+        escolha = dialogos.escolher(
+            self, "Linguagem", "Realce de sintaxe:", nomes,
+            nomes.index(atual) if atual in nomes else 0)
+        if escolha is None:
+            return
+        provedor = REGISTRO.por_nome(escolha)
+        if provedor is not None:
+            self.definir_linguagem(provedor)
 
     def _montar_menu_de_recentes(self) -> None:
         """Submenu "Arquivos recentes", reconstruido a cada abertura.
@@ -683,7 +775,7 @@ class JanelaPrincipal(QMainWindow):
             misto=doc.fins_de_linha_mistos)
         self.barra.definir_indentacao(doc.indentacao.usa_espacos,
                                       doc.indentacao.largura)
-        self.barra.definir_linguagem("Texto")
+        self.barra.definir_linguagem(doc.nome_da_linguagem)
         self.barra.definir_aviso(doc.aviso)
         self._atualizar_titulo()
 

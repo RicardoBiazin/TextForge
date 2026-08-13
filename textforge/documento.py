@@ -100,7 +100,10 @@ class Documento(QObject):
         self.binario: bool = False
         self.assinatura: Assinatura | None = None
         self.perfil: Perfil | None = None     # como a deteccao decidiu
-        self.provedor = None                  # ProvedorDeLinguagem (etapa 5)
+        self.provedor = None                  # ProvedorDeLinguagem
+        # True quando o usuario escolheu a linguagem no menu: impede que uma
+        # redetecao posterior desfaca a escolha dele.
+        self.linguagem_manual: bool = False
         self.aviso: str = ""                  # texto para a barra de status
 
         self.qt.modificationChanged.connect(self.modificado_mudou)
@@ -261,6 +264,7 @@ class Documento(QObject):
         if cfg.get("detectar_indentacao", True):
             self.indentacao = imod.detectar(perfil.texto, self.indentacao)
 
+        self.detectar_linguagem(perfil.texto)
         self.definir_texto(perfil.texto)
 
         if perfil.suspeito:
@@ -273,6 +277,37 @@ class Documento(QObject):
                           f"Arquivo > Reabrir como para escolher a codificacao.")
             log.warning("%s: %d substituicoes ao decodificar como %s",
                         self.caminho, perfil.substituicoes, perfil.codec)
+
+    # ==================================================================
+    # Linguagem
+    # ==================================================================
+
+    def detectar_linguagem(self, texto: str = "") -> None:
+        """Resolve o provedor pelo caminho e pelo conteudo (requisito 4).
+
+        A amostra e' limitada aos primeiros 8 KB: e' o que basta para qualquer
+        deteccao, e passar um arquivo de 20 MB pelas heuristicas de todos os
+        provedores custaria mais que abrir o arquivo.
+        """
+        from textforge.linguagens import registro
+
+        amostra = (texto or self.texto())[:8192]
+        self.provedor = registro.por_caminho(self.caminho, amostra)
+        self.linguagem_manual = False
+
+    def definir_linguagem(self, provedor) -> None:
+        """Troca a linguagem por escolha do usuario (menu Linguagem).
+
+        `linguagem_manual` impede que uma redetecao posterior (ao salvar como, por
+        exemplo) desfaca a escolha dele.
+        """
+        self.provedor = provedor
+        self.linguagem_manual = True
+        self.metadados_mudaram.emit()
+
+    @property
+    def nome_da_linguagem(self) -> str:
+        return self.provedor.nome if self.provedor is not None else "Texto"
 
     def reabrir_como(self, codec: str) -> None:
         """Le' o MESMO arquivo com outra codificacao (requisito 7)."""

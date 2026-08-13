@@ -37,6 +37,11 @@ def main(argv: list[str] | None = None) -> int:
     from textforge import configuracao, instancia_unica
     cfg = configuracao.carregar()
 
+    # Os provedores de linguagem sao registrados ANTES da janela: o primeiro
+    # documento aberto ja' precisa deles para detectar a linguagem.
+    from textforge import linguagens
+    log.info("linguagens registradas: %d", linguagens.carregar_embutidos())
+
     if not args.nova_janela and not args.autoverificacao and args.alvos:
         if instancia_unica.enviar_para_instancia_existente(args.como_pedido()):
             return 0
