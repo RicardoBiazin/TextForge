@@ -13,18 +13,17 @@ from __future__ import annotations
 
 from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtGui import QCloseEvent, QIcon
-from PySide6.QtWidgets import (QLabel, QMainWindow, QMessageBox, QToolBar,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import QMainWindow, QMessageBox, QToolBar, QWidget
 
 from textforge import APP, AUTOR, VERSAO, configuracao, log_interno, recursos
+from textforge.editor.indentacao import Indentacao
+from textforge.editor.widget import EditorDeTexto
+from textforge.interface import dialogos
 from textforge.interface import tema as tema_mod
 from textforge.interface.barra_de_status import BarraDeStatus
 from textforge.interface.menus import Vinculos
 
 log = log_interno.obter(__name__)
-
-ZOOM_MINIMO = 6
-ZOOM_MAXIMO = 48
 
 
 class JanelaPrincipal(QMainWindow):
@@ -38,9 +37,12 @@ class JanelaPrincipal(QMainWindow):
         self._aplicar_icone()
 
         self.vinculos = Vinculos(self)
-        self._montar_centro()
         self.barra = BarraDeStatus(self)
         self.setStatusBar(self.barra)
+        # O centro vem ANTES de ligar os comandos: quase todo comando desta etapa
+        # aponta para um metodo do editor, que precisa existir antes.
+        self._montar_centro()
+        self._ligar_editor()
 
         self._ligar_comandos()
         self.vinculos.construir_barra_de_menu(self.menuBar())
@@ -65,19 +67,38 @@ class JanelaPrincipal(QMainWindow):
             self.setWindowIcon(QIcon(str(icone)))
 
     def _montar_centro(self) -> None:
-        """Area central. A etapa 4 troca isto pelo gerenciador de abas."""
-        centro = QWidget(self)
-        layout = QVBoxLayout(centro)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self._boas_vindas = QLabel(
-            f"<h2>{APP} {VERSAO}</h2>"
-            "<p>Arraste arquivos para esta janela, ou use "
-            "<b>Arquivo &gt; Abrir</b>.</p>"
-            "<p style='color:gray'>Abrir arquivos entra na etapa 3.</p>",
-            alignment=Qt.AlignmentFlag.AlignCenter)
-        self._boas_vindas.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(self._boas_vindas)
-        self.setCentralWidget(centro)
+        """Area central: um editor. A etapa 4 troca isto por abas."""
+        self.editor = EditorDeTexto(self.cfg, self.tema, self)
+        self.editor.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self.editor.customContextMenuRequested.connect(self._menu_do_editor)
+        self.setCentralWidget(self.editor)
+
+    def _ligar_editor(self) -> None:
+        """Conecta o editor a' barra de status."""
+        self.editor.posicao_mudou.connect(self.barra.definir_posicao)
+        self.editor.selecao_mudou.connect(self.barra.definir_selecao)
+        self.editor.zoom_mudou.connect(
+            lambda t: self.barra.showMessage(f"Fonte: {t} pt", 1500))
+        self.editor.document().modificationChanged.connect(self._atualizar_titulo)
+        self.barra.posicao_clicada.connect(self.ir_para_linha)
+        self.barra.indentacao_clicada.connect(self.escolher_tabulacao)
+        self.barra.definir_indentacao(self.editor.indentacao.usa_espacos,
+                                      self.editor.indentacao.largura)
+        self.barra.definir_posicao(0, 0)
+        self.barra.definir_linguagem("Texto")
+        self.barra.definir_fim_de_linha("CRLF")
+        self.barra.definir_codificacao("UTF-8")
+
+    def _menu_do_editor(self, ponto) -> None:
+        """Menu de contexto do editor (requisito 20), montado na hora.
+
+        Montar a cada clique, em vez de uma vez, e' o que faz os itens
+        refletirem o estado atual (ha' selecao? ha' o que desfazer?) sem
+        precisar manter isso sincronizado.
+        """
+        menu = self.vinculos.menu_de_contexto(self.editor)
+        menu.exec(self.editor.viewport().mapToGlobal(ponto))
 
     def _ligar_comandos(self) -> None:
         """Liga o que JA existe. O resto fica desabilitado no menu.
@@ -86,16 +107,87 @@ class JanelaPrincipal(QMainWindow):
         vez de escondidos: o usuario ve o que o programa vai ter, e nenhum item
         clicavel finge funcionar.
         """
-        self.vinculos.ligar_muitos({
+        e = self.editor
+        ligacoes: dict[str, object] = {
             "arquivo.sair": self.close,
-            "exibir.tela_cheia": self.alternar_tela_cheia,
-            "exibir.barra_de_ferramentas": self.alternar_barra_de_ferramentas,
-            "exibir.aumentar_zoom": lambda: self.ajustar_zoom(+1),
-            "exibir.diminuir_zoom": lambda: self.ajustar_zoom(-1),
-            "exibir.zoom_normal": self.zoom_normal,
             "ajuda.sobre": self.mostrar_sobre,
             "ajuda.abrir_log": self.abrir_log,
-        })
+
+            # -- edicao basica (o Qt ja' faz; so' expomos nos menus) ---------
+            "editar.desfazer": e.undo,
+            "editar.refazer": e.redo,
+            "editar.recortar": e.cut,
+            "editar.copiar": e.copy,
+            "editar.colar": e.paste,
+            "editar.selecionar_tudo": e.selectAll,
+            "editar.excluir": lambda: e.textCursor().removeSelectedText(),
+            "editar.copiar_linha": self.copiar_linha,
+
+            # -- linhas e indentacao ----------------------------------------
+            "linha.duplicar": e.duplicar_linha,
+            "linha.excluir": e.excluir_linha,
+            "linha.mover_acima": lambda: e.mover_linha(para_baixo=False),
+            "linha.mover_abaixo": lambda: e.mover_linha(para_baixo=True),
+            "indentar.aumentar": e.indentar_selecao,
+            "indentar.diminuir": e.desindentar_selecao,
+
+            # -- navegacao e marcadores -------------------------------------
+            "ir.linha": self.ir_para_linha,
+            "marca.alternar": e.alternar_marcador,
+            "marca.proximo": lambda: e.ir_para_marcador(adiante=True),
+            "marca.anterior": lambda: e.ir_para_marcador(adiante=False),
+            "marca.limpar": e.limpar_marcadores,
+
+            # -- exibicao ----------------------------------------------------
+            "exibir.tela_cheia": self.alternar_tela_cheia,
+            "exibir.barra_de_ferramentas": self.alternar_barra_de_ferramentas,
+            "exibir.aumentar_zoom": lambda: e.ajustar_zoom(+1),
+            "exibir.diminuir_zoom": lambda: e.ajustar_zoom(-1),
+            "exibir.zoom_normal": self.zoom_normal,
+            "exibir.quebra_de_linha": lambda: self.alternar_opcao(
+                "quebra_de_linha"),
+            "exibir.espacos": lambda: self.alternar_opcao("mostrar_espacos"),
+            "exibir.fim_de_linha": lambda: self.alternar_opcao(
+                "mostrar_fim_de_linha"),
+            "exibir.guias": lambda: self.alternar_opcao(
+                "mostrar_guias_de_indentacao"),
+            "exibir.linha_atual": lambda: self.alternar_opcao(
+                "realcar_linha_atual"),
+
+            # -- tabulacao ---------------------------------------------------
+            "tab.2": lambda: self.definir_tabulacao(2),
+            "tab.4": lambda: self.definir_tabulacao(4),
+            "tab.8": lambda: self.definir_tabulacao(8),
+            "tab.usar_tab": self.alternar_usar_tab,
+            "indentar.tab_para_espacos": self.converter_tab_para_espacos,
+            "indentar.espacos_para_tab": self.converter_espacos_para_tab,
+        }
+
+        # As operacoes de linha e as conversoes de caixa sao ligadas por tabela:
+        # sao 19 comandos que so' diferem pela funcao pura que aplicam, e escrever
+        # 19 lambdas na mao seria 19 oportunidades de trocar uma pela outra.
+        from textforge.editor import caixa as cmod
+        from textforge.editor import operacoes_linha as ops
+
+        por_linhas = {
+            "linha.ordenar": lambda l: ops.ordenar(l),
+            "linha.ordenar_sem_caixa": lambda l: ops.ordenar(l, ignorar_caixa=True),
+            "linha.inverter": ops.inverter,
+            "linha.remover_duplicadas": lambda l: ops.remover_duplicadas(l),
+            "linha.remover_vazias": lambda l: ops.remover_vazias(l),
+            "linha.trim_inicio": ops.aparar_inicio,
+            "linha.trim_fim": ops.aparar_fim,
+        }
+        for id_, funcao in por_linhas.items():
+            ligacoes[id_] = (lambda f=funcao: self.editor.aplicar_em_linhas(f))
+
+        for id_, funcao in cmod.POR_COMANDO.items():
+            ligacoes[id_] = (lambda f=funcao: self.editor.converter_caixa(f))
+
+        ligacoes["linha.prefixar"] = self.prefixar_linhas
+        ligacoes["linha.sufixar"] = self.sufixar_linhas
+
+        self.vinculos.ligar_muitos(ligacoes)
 
     # -- tema --------------------------------------------------------------
 
@@ -127,6 +219,9 @@ class JanelaPrincipal(QMainWindow):
         # QPushButton plano com folha de estilo nao reresolve `palette(...)`
         # numa troca de tema com a janela aberta.
         self.barra.aplicar_tema(tema)
+        editor = getattr(self, "editor", None)
+        if editor is not None:
+            editor.aplicar_tema(tema)
         log.info("tema aplicado: %s (%s)", tema.nome, tema.tipo)
 
     def _repolir(self, widget: QWidget) -> None:
@@ -152,19 +247,109 @@ class JanelaPrincipal(QMainWindow):
         self.ferramentas.setVisible(visivel)
         self.cfg["mostrar_barra_de_ferramentas"] = visivel
 
-    def ajustar_zoom(self, passos: int) -> None:
-        tamanho = int(self.cfg.get("fonte_tamanho", 11)) + passos
-        self.cfg["fonte_tamanho"] = max(ZOOM_MINIMO, min(ZOOM_MAXIMO, tamanho))
-        self.aplicar_fonte()
+    def alternar_opcao(self, chave: str) -> None:
+        """Inverte uma preferencia booleana e reaplica ao editor.
+
+        Um metodo so' para as seis opcoes de exibicao, em vez de seis metodos
+        quase iguais: a chave do config e' o unico dado que varia, e ela ja' vem
+        declarada no proprio comando (`chave_de_config` em `acoes.py`).
+        """
+        self.cfg[chave] = not bool(self.cfg.get(chave, False))
+        self.editor.aplicar_configuracao(self.cfg)
+        self.vinculos.sincronizar_alternaveis(self.cfg)
 
     def zoom_normal(self) -> None:
         self.cfg["fonte_tamanho"] = configuracao.padrao()["fonte_tamanho"]
-        self.aplicar_fonte()
+        self.editor.aplicar_fonte()
 
-    def aplicar_fonte(self) -> None:
-        """Repassa fonte e tamanho aos editores. Sem editores ainda, so' loga."""
-        log.info("fonte: %s %dpt", self.cfg.get("fonte"),
-                 self.cfg.get("fonte_tamanho"))
+    # -- tabulacao ---------------------------------------------------------
+
+    def definir_tabulacao(self, largura: int) -> None:
+        self.cfg["tabulacao"] = largura
+        self.editor.definir_indentacao(
+            Indentacao(usa_espacos=bool(self.cfg.get("usar_espacos", True)),
+                       largura=largura))
+        self._mostrar_indentacao()
+
+    def alternar_usar_tab(self) -> None:
+        self.cfg["usar_espacos"] = not bool(self.cfg.get("usar_espacos", True))
+        self.definir_tabulacao(int(self.cfg.get("tabulacao", 4)))
+        self.vinculos.sincronizar_alternaveis(self.cfg)
+
+    def escolher_tabulacao(self) -> None:
+        """Chamado pelo clique no campo de indentacao da barra de status."""
+        opcoes = ["Espacos: 2", "Espacos: 4", "Espacos: 8",
+                  "TAB: 2", "TAB: 4", "TAB: 8"]
+        atual = self.editor.indentacao
+        rotulo = atual.rotulo()
+        escolha = dialogos.escolher(
+            self, "Indentacao", "Usar:", opcoes,
+            opcoes.index(rotulo) if rotulo in opcoes else 1)
+        if escolha is None:
+            return
+        tipo, _, largura = escolha.partition(": ")
+        self.cfg["usar_espacos"] = tipo == "Espacos"
+        self.definir_tabulacao(int(largura))
+        self.vinculos.sincronizar_alternaveis(self.cfg)
+
+    def _mostrar_indentacao(self) -> None:
+        self.barra.definir_indentacao(self.editor.indentacao.usa_espacos,
+                                      self.editor.indentacao.largura)
+
+    def converter_tab_para_espacos(self) -> None:
+        from textforge.editor import indentacao as imod
+        largura = self.editor.indentacao.largura
+        self.editor.aplicar_em_linhas(
+            lambda linhas: [imod.tab_para_espacos(l, largura) for l in linhas])
+
+    def converter_espacos_para_tab(self) -> None:
+        from textforge.editor import indentacao as imod
+        largura = self.editor.indentacao.largura
+        self.editor.aplicar_em_linhas(
+            lambda linhas: [imod.espacos_para_tab(l, largura) for l in linhas])
+
+    # -- linhas ------------------------------------------------------------
+
+    def copiar_linha(self) -> None:
+        """Copia a linha inteira sem precisar selecionar (requisito 40)."""
+        cursor = self.editor.textCursor()
+        if cursor.hasSelection():
+            self.editor.copy()
+            return
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(cursor.block().text() + "\n")
+        self.barra.showMessage("Linha copiada", 1500)
+
+    def prefixar_linhas(self) -> None:
+        from textforge.editor import operacoes_linha as ops
+        texto = dialogos.pedir_texto(self, "Inserir no inicio das linhas",
+                                     "Texto a inserir no inicio de cada linha:")
+        if not texto:
+            return
+        self.editor.aplicar_em_linhas(lambda l: ops.prefixar(l, texto))
+
+    def sufixar_linhas(self) -> None:
+        from textforge.editor import operacoes_linha as ops
+        texto = dialogos.pedir_texto(self, "Inserir no fim das linhas",
+                                     "Texto a inserir no fim de cada linha:")
+        if not texto:
+            return
+        self.editor.aplicar_em_linhas(lambda l: ops.sufixar(l, texto))
+
+    # -- navegacao ---------------------------------------------------------
+
+    def ir_para_linha(self) -> None:
+        escolha = dialogos.pedir_linha(
+            self, self.editor.document().blockCount(),
+            self.editor.textCursor().blockNumber())
+        if escolha is None:
+            return
+        self.editor.ir_para_linha(*escolha)
+        self.editor.setFocus()
+
+    def _atualizar_titulo(self) -> None:
+        modificado = self.editor.document().isModified()
+        self.setWindowTitle(f"{'*' if modificado else ''}Sem titulo - {APP}")
 
     def mostrar_sobre(self) -> None:
         QMessageBox.about(

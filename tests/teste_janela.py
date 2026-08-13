@@ -64,28 +64,84 @@ with appdata_temporario():
     checa_igual(sem_qacao, [], "todo comando com atalho virou QAction")
 
     # ---------------------------------------------------------------------
-    secao("3 - zoom")
+    secao("3 - editor no centro e comandos ligados a ele")
 
+    from textforge.editor.widget import EditorDeTexto             # noqa: E402
+    checa(isinstance(janela.centralWidget(), EditorDeTexto),
+          "o widget central e' o editor")
+
+    # O zoom mora no EDITOR, nao na janela: e' o editor que tem a fonte e o
+    # Ctrl+roda. A janela apenas encaminha o comando de menu.
     cfg["fonte_tamanho"] = 11
-    janela.ajustar_zoom(+2)
-    checa_igual(cfg["fonte_tamanho"], 13, "aumentar zoom soma ao tamanho")
-    janela.ajustar_zoom(-5)
-    checa_igual(cfg["fonte_tamanho"], 8, "diminuir zoom subtrai")
-    janela.zoom_normal()
+    janela.editor.aplicar_fonte()
+    checa(janela.vinculos.acionar("exibir.aumentar_zoom"),
+          "o comando de aumentar zoom esta' ligado")
+    checa_igual(cfg["fonte_tamanho"], 12, "e aumentou o tamanho da fonte")
+    janela.vinculos.acionar("exibir.zoom_normal")
     checa_igual(cfg["fonte_tamanho"], configuracao.padrao()["fonte_tamanho"],
                 "zoom normal volta ao padrao")
 
-    # Os limites existem para o usuario nao conseguir zerar a fonte com o
-    # Ctrl+roda e ficar sem conseguir ler o menu para desfazer.
-    for _ in range(50):
-        janela.ajustar_zoom(-1)
-    checa(cfg["fonte_tamanho"] >= 6, "o zoom tem piso")
-    for _ in range(200):
-        janela.ajustar_zoom(+1)
-    checa(cfg["fonte_tamanho"] <= 48, "o zoom tem teto")
+    ESPERADOS_LIGADOS = [
+        "editar.desfazer", "editar.refazer", "editar.copiar", "editar.colar",
+        "editar.selecionar_tudo", "editar.copiar_linha",
+        "linha.duplicar", "linha.excluir", "linha.mover_acima",
+        "linha.ordenar", "linha.remover_duplicadas", "linha.remover_vazias",
+        "linha.inverter", "linha.trim_inicio", "linha.trim_fim",
+        "linha.prefixar", "linha.sufixar",
+        "caixa.maiusculas", "caixa.snake", "caixa.camel",
+        "indentar.aumentar", "indentar.diminuir",
+        "indentar.tab_para_espacos", "indentar.espacos_para_tab",
+        "ir.linha", "marca.alternar", "marca.proximo", "marca.limpar",
+        "exibir.quebra_de_linha", "exibir.espacos", "exibir.fim_de_linha",
+        "tab.2", "tab.4", "tab.8", "tab.usar_tab",
+    ]
+    faltando = [i for i in ESPERADOS_LIGADOS
+                if not janela.vinculos.tem_tratador(i)]
+    checa_igual(faltando, [],
+                f"os {len(ESPERADOS_LIGADOS)} comandos da etapa 2 estao ligados")
 
     # ---------------------------------------------------------------------
-    secao("4 - barra de ferramentas e tema")
+    secao("4 - os comandos agem de verdade no editor")
+
+    janela.editor.setPlainText("b\na\nb")
+    janela.editor.selectAll()
+    janela.vinculos.acionar("linha.ordenar")
+    checa_igual(janela.editor.toPlainText(), "a\nb\nb",
+                "'Ordenar linhas' pelo menu ordena o texto")
+
+    janela.editor.selectAll()
+    janela.vinculos.acionar("linha.remover_duplicadas")
+    checa_igual(janela.editor.toPlainText(), "a\nb",
+                "'Remover duplicadas' pelo menu funciona")
+
+    janela.editor.undo()
+    checa_igual(janela.editor.toPlainText(), "a\nb\nb",
+                "e um unico undo desfaz a operacao do menu")
+
+    janela.editor.setPlainText("numero_guia")
+    janela.editor.selectAll()
+    janela.vinculos.acionar("caixa.camel")
+    checa_igual(janela.editor.toPlainText(), "numeroGuia",
+                "'camelCase' pelo menu converte a selecao")
+
+    # ---------------------------------------------------------------------
+    secao("5 - opcoes de exibicao alternam e sao gravadas")
+
+    antes = bool(cfg.get("quebra_de_linha"))
+    janela.vinculos.acionar("exibir.quebra_de_linha")
+    checa_igual(cfg["quebra_de_linha"], not antes,
+                "alternar a quebra de linha grava a preferencia")
+    qa = janela.vinculos.qacao("exibir.quebra_de_linha")
+    checa_igual(qa.isChecked(), not antes,
+                "e o item de menu passa a refletir o estado")
+
+    janela.vinculos.acionar("tab.8")
+    checa_igual(cfg["tabulacao"], 8, "'8 espacos' grava a tabulacao")
+    checa_igual(janela.editor.indentacao.largura, 8,
+                "e o editor passa a usar 8")
+
+    # ---------------------------------------------------------------------
+    secao("6 - barra de ferramentas e tema")
 
     visivel = janela.ferramentas.isVisible()
     janela.alternar_barra_de_ferramentas()
@@ -105,7 +161,7 @@ with appdata_temporario():
                 "a paleta vai para a QApplication (senao os dialogos nao seguem)")
 
     # ---------------------------------------------------------------------
-    secao("5 - fechar grava as preferencias")
+    secao("7 - fechar grava as preferencias")
 
     janela.resize(900, 600)
     janela.close()
@@ -116,7 +172,7 @@ with appdata_temporario():
                 "o tamanho da fonte foi gravado ao fechar")
 
     # ---------------------------------------------------------------------
-    secao("6 - a geometria e' restaurada, e uma corrompida nao derruba")
+    secao("8 - a geometria e' restaurada, e uma corrompida nao derruba")
 
     outra = JanelaPrincipal(configuracao.carregar())
     checa(outra.width() > 0 and outra.height() > 0,

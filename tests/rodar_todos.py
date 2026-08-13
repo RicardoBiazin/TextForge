@@ -30,7 +30,11 @@ SUITES = [
     ("teste_fonte.py", "a mesma bateria nas 3 implementacoes de FonteDeTexto"),
     ("teste_acoes.py", "registro de comandos, atalhos, menus, palette"),
     ("teste_tema.py", "papeis, cores, merge do tema do usuario, contraste"),
-    ("teste_janela.py", "janela sobe, menus montados, zoom, geometria"),
+    # etapa 2 -- editor
+    ("teste_indentacao.py", "deteccao por arquivo, largura visual, conversoes"),
+    ("teste_operacoes_linha.py", "requisito 22 (linhas) e 40 (caixa)"),
+    ("teste_editor.py", "margem, linha atual, Tab em bloco, undo, marcadores"),
+    ("teste_janela.py", "janela, menus, comandos ligados ao editor"),
 ]
 
 
