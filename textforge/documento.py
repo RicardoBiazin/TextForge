@@ -163,7 +163,14 @@ class Documento(QObject):
     def definir_texto(self, texto: str, *, marcar_modificado: bool = False) -> None:
         """Substitui o conteudo. Por padrao, sem marcar como modificado."""
         self.qt.setPlainText(codificacao.para_lf(texto))
-        if not marcar_modificado:
+        if marcar_modificado:
+            # setModified(True) EXPLICITO. O `setPlainText` do Qt zera a flag de
+            # modificado, entao contar com ela para ficar True nao funciona -- e a
+            # consequencia seria grave: conteudo RECUPERADO apos um encerramento
+            # inesperado nao apareceria como nao salvo, e o usuario o perderia de
+            # novo ao fechar. O mesmo vale para "aparar espaco no fim".
+            self.qt.setModified(True)
+        else:
             self.qt.setModified(False)
             # O carregamento nao e' uma acao do usuario: deixar o undo apontando
             # para "documento vazio" faria um Ctrl+Z apagar o arquivo inteiro.

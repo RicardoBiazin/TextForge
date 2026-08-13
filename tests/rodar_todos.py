@@ -43,6 +43,9 @@ SUITES = [
     ("teste_codificacao.py", "BOM, cascata, binario, EOL, perdas"),
     ("teste_documento.py", "round-trip byte a byte, salvar atomico, req. 27"),
     ("teste_vigia.py", "alteracao externa: watcher + consulta periodica"),
+    # etapa 4 -- abas, sessao, recuperacao
+    ("teste_abas.py", "identidade por arquivo, asterisco, menu de contexto"),
+    ("teste_sessao.py", "sessao, trava por rename, recuperacao com codec"),
 ]
 
 

@@ -1,27 +1,34 @@
 """Janela principal.
 
-Etapa 1: barra de menu inteira gerada do registro de comandos, barra de
-ferramentas, barra de status, tema claro/escuro/seguir Windows, zoom e geometria
-lembrada. As abas e o editor entram nas etapas 2 e 4.
+Hospeda o gerenciador de abas, a barra de menu gerada do registro de comandos, a
+barra de ferramentas, a barra de status e o vigia de alteracao externa.
 
-O que esta janela NAO faz de proposito: ela nao contem regra de negocio. Abrir
-arquivo, detectar encoding e formatar sao dos modulos do nucleo; aqui so' se
-liga o comando a' funcao e se mostra o resultado.
+O que esta janela NAO faz, de proposito: regra de negocio. Abrir arquivo, detectar
+codificacao, formatar e buscar sao dos modulos do nucleo; aqui so' se liga o
+comando a' funcao e se mostra o resultado. E' o que permite testar encoding, busca
+e formatadores sem subir uma QApplication.
+
+Invariante que simplifica tudo: SEMPRE existe pelo menos uma aba. Ao fechar a
+ultima, uma aba vazia toma o lugar. Sem isso, cada um dos ~50 comandos precisaria
+tratar o caso "nenhum documento aberto".
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, Qt
+import pathlib
+
+from PySide6.QtCore import QByteArray, Qt, QTimer
 from PySide6.QtGui import QCloseEvent, QIcon
-from PySide6.QtWidgets import QMainWindow, QMessageBox, QToolBar, QWidget
+from PySide6.QtWidgets import (QApplication, QFileDialog, QMainWindow,
+                               QMessageBox, QToolBar, QWidget)
 
 from textforge import (APP, AUTOR, VERSAO, arquivos, codificacao, configuracao,
-                       log_interno, recursos)
+                       log_interno, recursos, sessao as sessao_mod)
 from textforge.documento import Documento
 from textforge.editor.indentacao import Indentacao
-from textforge.editor.widget import EditorDeTexto
 from textforge.interface import dialogos
 from textforge.interface import tema as tema_mod
+from textforge.interface.abas import Aba, GerenciadorAbas
 from textforge.interface.barra_de_status import BarraDeStatus
 from textforge.interface.menus import Vinculos
 from textforge.vigia import Vigia
@@ -44,29 +51,55 @@ FILTRO_DE_ARQUIVOS = ";;".join([
     "Todos os arquivos (*)",
 ])
 
+# Comandos que sao apenas um metodo do editor. Ligar por tabela evita ~15 lambdas
+# quase iguais, onde e' facil trocar uma pela outra sem ninguem notar.
+DIRETO_NO_EDITOR: dict[str, str] = {
+    "editar.desfazer": "undo",
+    "editar.refazer": "redo",
+    "editar.recortar": "cut",
+    "editar.copiar": "copy",
+    "editar.colar": "paste",
+    "editar.selecionar_tudo": "selectAll",
+    "linha.duplicar": "duplicar_linha",
+    "linha.excluir": "excluir_linha",
+    "indentar.aumentar": "indentar_selecao",
+    "indentar.diminuir": "desindentar_selecao",
+    "marca.alternar": "alternar_marcador",
+    "marca.limpar": "limpar_marcadores",
+}
+
 
 class JanelaPrincipal(QMainWindow):
-    def __init__(self, cfg: dict) -> None:
+    def __init__(self, cfg: dict, *, restaurar_sessao: bool = False) -> None:
         super().__init__()
         self.cfg = cfg
         self.tema = tema_mod.resolver(cfg.get("tema", "sistema"))
 
         self.setWindowTitle(APP)
-        self.setAcceptDrops(True)          # requisito 19; tratado na etapa 4
+        self.setAcceptDrops(True)          # requisito 19
         self._aplicar_icone()
 
         self.vinculos = Vinculos(self)
         self.barra = BarraDeStatus(self)
         self.setStatusBar(self.barra)
-        # Vigia hibrido de alteracao externa (requisito 27). Criado antes do
-        # centro porque `_adotar` ja' registra o documento nele.
+
         self.vigia = Vigia(self)
         self.vigia.mudou.connect(self._ao_mudar_no_disco)
         self.vigia.removido.connect(self._ao_remover_do_disco)
-        # O centro vem ANTES de ligar os comandos: quase todo comando desta etapa
-        # aponta para um metodo do editor, que precisa existir antes.
-        self._montar_centro()
-        self._ligar_editor()
+
+        self.abas = GerenciadorAbas(cfg, self.tema, self)
+        self.abas.pode_fechar = self._pode_fechar_aba
+        self.abas.montar_menu_do_editor = self.vinculos.menu_de_contexto
+        self.abas.documento_trocado.connect(self._ao_trocar_de_aba)
+        self.abas.titulo_mudou.connect(self._atualizar_titulo)
+        self.abas.posicao_mudou.connect(self.barra.definir_posicao)
+        self.abas.selecao_mudou.connect(self.barra.definir_selecao)
+        self.setCentralWidget(self.abas)
+
+        self.barra.posicao_clicada.connect(self.ir_para_linha)
+        self.barra.indentacao_clicada.connect(self.escolher_tabulacao)
+        self.barra.codificacao_clicada.connect(self.escolher_codificacao)
+        self.barra.fim_de_linha_clicado.connect(self._escolher_eol)
 
         self._ligar_comandos()
         self.vinculos.construir_barra_de_menu(self.menuBar())
@@ -77,82 +110,80 @@ class JanelaPrincipal(QMainWindow):
         self.vinculos.construir_barra_de_ferramentas(self.ferramentas)
         self.vinculos.registrar_atalhos_sem_menu()
         self.vinculos.sincronizar_alternaveis(cfg)
+        self._montar_menu_de_recentes()
 
         self.aplicar_tema(self.tema)
         self.ferramentas.setVisible(
             bool(cfg.get("mostrar_barra_de_ferramentas", True)))
         self._restaurar_geometria()
 
-    # -- construcao --------------------------------------------------------
+        # Trava de sessao e copia de recuperacao (requisitos 16 e 17).
+        self.trava = sessao_mod.Trava()
+        self._temporizador_de_recuperacao = QTimer(self)
+        self._temporizador_de_recuperacao.timeout.connect(self._gravar_recuperacao)
+
+        if restaurar_sessao:
+            self._iniciar_sessao()
+        if self.abas.count() == 0:
+            self.nova_aba()
+
+    # ==================================================================
+    # Acesso ao documento e ao editor da aba ativa
+    # ==================================================================
+
+    @property
+    def documento(self) -> Documento:
+        doc = self.abas.documento_atual()
+        if doc is None:                     # invariante: sempre ha' uma aba
+            aba = self.nova_aba()
+            return aba.documento
+        return doc
+
+    @property
+    def editor(self):
+        aba = self.abas.aba_atual()
+        if aba is None:
+            return self.nova_aba().editor
+        return aba.editor
+
+    def _no_editor(self, nome_do_metodo: str) -> None:
+        editor = self.abas.editor_atual()
+        if editor is not None:
+            getattr(editor, nome_do_metodo)()
+
+    # ==================================================================
+    # Construcao
+    # ==================================================================
 
     def _aplicar_icone(self) -> None:
         icone = recursos.raiz() / "icone.ico"
         if icone.is_file():
             self.setWindowIcon(QIcon(str(icone)))
 
-    def _montar_centro(self) -> None:
-        """Area central: um editor. A etapa 4 troca isto por abas."""
-        self.documento = Documento.novo(self.cfg)
-        self.editor = EditorDeTexto(self.cfg, self.tema, self)
-        self.editor.setDocument(self.documento.qt)
-        self.editor.setContextMenuPolicy(
-            Qt.ContextMenuPolicy.CustomContextMenu)
-        self.editor.customContextMenuRequested.connect(self._menu_do_editor)
-        self.setCentralWidget(self.editor)
-
-    def _ligar_editor(self) -> None:
-        """Conecta o editor a' barra de status."""
-        self.editor.posicao_mudou.connect(self.barra.definir_posicao)
-        self.editor.selecao_mudou.connect(self.barra.definir_selecao)
-        self.editor.zoom_mudou.connect(
-            lambda t: self.barra.showMessage(f"Fonte: {t} pt", 1500))
-        self.barra.posicao_clicada.connect(self.ir_para_linha)
-        self.barra.indentacao_clicada.connect(self.escolher_tabulacao)
-        self.barra.codificacao_clicada.connect(self.escolher_codificacao)
-        self.barra.fim_de_linha_clicado.connect(self._escolher_eol)
-        self.barra.definir_posicao(0, 0)
-        self._adotar(self.documento)
-
-    def _escolher_eol(self) -> None:
-        """Clique no campo de fim de linha da barra de status."""
-        rotulos = ["Windows (CRLF)", "Unix (LF)", "Mac classico (CR)"]
-        valores = [codificacao.CRLF, codificacao.LF, codificacao.CR]
-        atual = valores.index(self.documento.fim_de_linha) \
-            if self.documento.fim_de_linha in valores else 0
-        escolha = dialogos.escolher(self, "Fim de linha", "Gravar usando:",
-                                    rotulos, atual)
-        if escolha is not None:
-            self.definir_eol(valores[rotulos.index(escolha)])
-
-    def _menu_do_editor(self, ponto) -> None:
-        """Menu de contexto do editor (requisito 20), montado na hora.
-
-        Montar a cada clique, em vez de uma vez, e' o que faz os itens
-        refletirem o estado atual (ha' selecao? ha' o que desfazer?) sem
-        precisar manter isso sincronizado.
-        """
-        menu = self.vinculos.menu_de_contexto(self.editor)
-        menu.exec(self.editor.viewport().mapToGlobal(ponto))
-
     def _ligar_comandos(self) -> None:
         """Liga o que JA existe. O resto fica desabilitado no menu.
 
-        E' de proposito que o menu mostre os comandos futuros desabilitados em
-        vez de escondidos: o usuario ve o que o programa vai ter, e nenhum item
+        E' de proposito que o menu mostre os comandos futuros desabilitados em vez
+        de escondidos: o usuario ve o que o programa vai ter, e nenhum item
         clicavel finge funcionar.
         """
-        e = self.editor
+        from textforge.editor import caixa as cmod
+        from textforge.editor import operacoes_linha as ops
+
         ligacoes: dict[str, object] = {
             "arquivo.sair": self.close,
             "ajuda.sobre": self.mostrar_sobre,
             "ajuda.abrir_log": self.abrir_log,
 
             # -- arquivo -----------------------------------------------------
-            "arquivo.novo": self.novo_documento,
+            "arquivo.novo": self.nova_aba,
             "arquivo.abrir": self.escolher_e_abrir,
             "arquivo.salvar": self.salvar,
             "arquivo.salvar_como": self.salvar_como,
+            "arquivo.salvar_todos": self.salvar_todos,
             "arquivo.recarregar": self.recarregar,
+            "arquivo.fechar": self.fechar_aba_atual,
+            "arquivo.fechar_todas": self.fechar_todas_as_abas,
             "arquivo.propriedades": self.mostrar_propriedades,
             "arquivo.abrir_local": self.abrir_local_do_arquivo,
             "arquivo.reabrir_como": self.reabrir_como,
@@ -161,36 +192,24 @@ class JanelaPrincipal(QMainWindow):
             "eol.lf": lambda: self.definir_eol(codificacao.LF),
             "eol.cr": lambda: self.definir_eol(codificacao.CR),
 
-            # -- edicao basica (o Qt ja' faz; so' expomos nos menus) ---------
-            "editar.desfazer": e.undo,
-            "editar.refazer": e.redo,
-            "editar.recortar": e.cut,
-            "editar.copiar": e.copy,
-            "editar.colar": e.paste,
-            "editar.selecionar_tudo": e.selectAll,
-            "editar.excluir": lambda: e.textCursor().removeSelectedText(),
+            # -- edicao ------------------------------------------------------
+            "editar.excluir": self.excluir_selecao,
             "editar.copiar_linha": self.copiar_linha,
+            "linha.mover_acima": lambda: self.mover_linha(False),
+            "linha.mover_abaixo": lambda: self.mover_linha(True),
+            "linha.prefixar": self.prefixar_linhas,
+            "linha.sufixar": self.sufixar_linhas,
 
-            # -- linhas e indentacao ----------------------------------------
-            "linha.duplicar": e.duplicar_linha,
-            "linha.excluir": e.excluir_linha,
-            "linha.mover_acima": lambda: e.mover_linha(para_baixo=False),
-            "linha.mover_abaixo": lambda: e.mover_linha(para_baixo=True),
-            "indentar.aumentar": e.indentar_selecao,
-            "indentar.diminuir": e.desindentar_selecao,
-
-            # -- navegacao e marcadores -------------------------------------
+            # -- navegacao ---------------------------------------------------
             "ir.linha": self.ir_para_linha,
-            "marca.alternar": e.alternar_marcador,
-            "marca.proximo": lambda: e.ir_para_marcador(adiante=True),
-            "marca.anterior": lambda: e.ir_para_marcador(adiante=False),
-            "marca.limpar": e.limpar_marcadores,
+            "marca.proximo": lambda: self._marcador(True),
+            "marca.anterior": lambda: self._marcador(False),
 
             # -- exibicao ----------------------------------------------------
             "exibir.tela_cheia": self.alternar_tela_cheia,
             "exibir.barra_de_ferramentas": self.alternar_barra_de_ferramentas,
-            "exibir.aumentar_zoom": lambda: e.ajustar_zoom(+1),
-            "exibir.diminuir_zoom": lambda: e.ajustar_zoom(-1),
+            "exibir.aumentar_zoom": lambda: self.zoom(+1),
+            "exibir.diminuir_zoom": lambda: self.zoom(-1),
             "exibir.zoom_normal": self.zoom_normal,
             "exibir.quebra_de_linha": lambda: self.alternar_opcao(
                 "quebra_de_linha"),
@@ -211,15 +230,13 @@ class JanelaPrincipal(QMainWindow):
             "indentar.espacos_para_tab": self.converter_espacos_para_tab,
         }
 
-        # As operacoes de linha e as conversoes de caixa sao ligadas por tabela:
-        # sao 19 comandos que so' diferem pela funcao pura que aplicam, e escrever
-        # 19 lambdas na mao seria 19 oportunidades de trocar uma pela outra.
-        from textforge.editor import caixa as cmod
-        from textforge.editor import operacoes_linha as ops
+        for id_, metodo in DIRETO_NO_EDITOR.items():
+            ligacoes[id_] = (lambda m=metodo: self._no_editor(m))
 
         por_linhas = {
             "linha.ordenar": lambda l: ops.ordenar(l),
-            "linha.ordenar_sem_caixa": lambda l: ops.ordenar(l, ignorar_caixa=True),
+            "linha.ordenar_sem_caixa": lambda l: ops.ordenar(l,
+                                                             ignorar_caixa=True),
             "linha.inverter": ops.inverter,
             "linha.remover_duplicadas": lambda l: ops.remover_duplicadas(l),
             "linha.remover_vazias": lambda l: ops.remover_vazias(l),
@@ -227,17 +244,52 @@ class JanelaPrincipal(QMainWindow):
             "linha.trim_fim": ops.aparar_fim,
         }
         for id_, funcao in por_linhas.items():
-            ligacoes[id_] = (lambda f=funcao: self.editor.aplicar_em_linhas(f))
-
+            ligacoes[id_] = (lambda f=funcao: self._aplicar_em_linhas(f))
         for id_, funcao in cmod.POR_COMANDO.items():
-            ligacoes[id_] = (lambda f=funcao: self.editor.converter_caixa(f))
-
-        ligacoes["linha.prefixar"] = self.prefixar_linhas
-        ligacoes["linha.sufixar"] = self.sufixar_linhas
+            ligacoes[id_] = (lambda f=funcao: self._converter_caixa(f))
 
         self.vinculos.ligar_muitos(ligacoes)
 
-    # -- tema --------------------------------------------------------------
+    def _montar_menu_de_recentes(self) -> None:
+        """Submenu "Arquivos recentes", reconstruido a cada abertura.
+
+        Reconstruir na hora, em vez de manter sincronizado, e' o que garante que a
+        lista nunca fique desatualizada em relacao ao config.
+        """
+        menu_arquivo = None
+        for acao in self.menuBar().actions():
+            if acao.text().replace("&", "") == "Arquivo":
+                menu_arquivo = acao.menu()
+                break
+        if menu_arquivo is None:
+            return
+        self._menu_recentes = menu_arquivo.addMenu("Arquivos &recentes")
+        self._menu_recentes.aboutToShow.connect(self._preencher_recentes)
+
+    def _preencher_recentes(self) -> None:
+        menu = self._menu_recentes
+        menu.clear()
+        recentes = [r for r in self.cfg.get("recentes", [])
+                    if pathlib.Path(r).is_file()]
+        if not recentes:
+            menu.addAction("(nenhum)").setEnabled(False)
+            return
+        for i, caminho in enumerate(recentes, start=1):
+            nome = pathlib.Path(caminho).name
+            acao = menu.addAction(f"&{i}  {nome}")
+            acao.setToolTip(caminho)
+            acao.triggered.connect(
+                lambda _c=False, alvo=caminho: self.abrir_arquivo(alvo))
+        menu.addSeparator()
+        menu.addAction("Limpar a lista", self._limpar_recentes)
+
+    def _limpar_recentes(self) -> None:
+        self.cfg["recentes"] = []
+        configuracao.salvar(self.cfg)
+
+    # ==================================================================
+    # Tema e configuracao
+    # ==================================================================
 
     def aplicar_tema(self, tema: tema_mod.Tema) -> None:
         """Troca o tema com a janela aberta.
@@ -245,8 +297,6 @@ class JanelaPrincipal(QMainWindow):
         Funciona porque nenhum widget guarda cor literal: todos pedem por nome ao
         `Tema`. Ver o cabecalho de `tema.py`.
         """
-        from PySide6.QtWidgets import QApplication
-
         self.tema = tema
         paleta = tema.qpalette()
         # A paleta vai na QApplication, e nao so' nesta janela: dialogos, menus
@@ -257,19 +307,13 @@ class JanelaPrincipal(QMainWindow):
         if instancia is not None:
             instancia.setPalette(paleta)
         self.setPalette(paleta)
-
-        # Trocar a paleta com a janela ja' montada nao repinta sozinho: os
-        # widgets guardam as cores resolvidas na ultima "polidura" do estilo.
-        # Sem este ciclo, ir do tema escuro para o claro deixava o texto da barra
-        # de menu e da barra de status quase branco sobre fundo claro -- ilegivel.
+        # Trocar a paleta com a janela montada nao repinta sozinho: os widgets
+        # guardam as cores resolvidas na ultima polidura do estilo. Sem este
+        # ciclo, ir do escuro para o claro deixava o texto dos menus e da barra
+        # de status quase branco sobre fundo claro -- ilegivel.
         self._repolir(self)
-        # A barra de status pinta os campos clicaveis por conta propria: um
-        # QPushButton plano com folha de estilo nao reresolve `palette(...)`
-        # numa troca de tema com a janela aberta.
         self.barra.aplicar_tema(tema)
-        editor = getattr(self, "editor", None)
-        if editor is not None:
-            editor.aplicar_tema(tema)
+        self.abas.aplicar_tema(tema)
         log.info("tema aplicado: %s (%s)", tema.nome, tema.tipo)
 
     def _repolir(self, widget: QWidget) -> None:
@@ -282,7 +326,11 @@ class JanelaPrincipal(QMainWindow):
             estilo.polish(filho)
             filho.update()
 
-    # -- comandos ----------------------------------------------------------
+    def alternar_opcao(self, chave: str) -> None:
+        """Inverte uma preferencia booleana e reaplica a TODAS as abas."""
+        self.cfg[chave] = not bool(self.cfg.get(chave, False))
+        self.abas.aplicar_configuracao(self.cfg)
+        self.vinculos.sincronizar_alternaveis(self.cfg)
 
     def alternar_tela_cheia(self) -> None:
         if self.isFullScreen():
@@ -295,208 +343,140 @@ class JanelaPrincipal(QMainWindow):
         self.ferramentas.setVisible(visivel)
         self.cfg["mostrar_barra_de_ferramentas"] = visivel
 
-    def alternar_opcao(self, chave: str) -> None:
-        """Inverte uma preferencia booleana e reaplica ao editor.
-
-        Um metodo so' para as seis opcoes de exibicao, em vez de seis metodos
-        quase iguais: a chave do config e' o unico dado que varia, e ela ja' vem
-        declarada no proprio comando (`chave_de_config` em `acoes.py`).
-        """
-        self.cfg[chave] = not bool(self.cfg.get(chave, False))
-        self.editor.aplicar_configuracao(self.cfg)
-        self.vinculos.sincronizar_alternaveis(self.cfg)
+    def zoom(self, passos: int) -> None:
+        editor = self.abas.editor_atual()
+        if editor is None:
+            return
+        editor.ajustar_zoom(passos)
+        # O zoom e' uma preferencia, nao um estado de aba: as outras abas seguem.
+        self.abas.aplicar_configuracao(self.cfg)
 
     def zoom_normal(self) -> None:
         self.cfg["fonte_tamanho"] = configuracao.padrao()["fonte_tamanho"]
-        self.editor.aplicar_fonte()
-
-    # -- tabulacao ---------------------------------------------------------
-
-    def definir_tabulacao(self, largura: int) -> None:
-        self.cfg["tabulacao"] = largura
-        self.editor.definir_indentacao(
-            Indentacao(usa_espacos=bool(self.cfg.get("usar_espacos", True)),
-                       largura=largura))
-        self._mostrar_indentacao()
-
-    def alternar_usar_tab(self) -> None:
-        self.cfg["usar_espacos"] = not bool(self.cfg.get("usar_espacos", True))
-        self.definir_tabulacao(int(self.cfg.get("tabulacao", 4)))
-        self.vinculos.sincronizar_alternaveis(self.cfg)
-
-    def escolher_tabulacao(self) -> None:
-        """Chamado pelo clique no campo de indentacao da barra de status."""
-        opcoes = ["Espacos: 2", "Espacos: 4", "Espacos: 8",
-                  "TAB: 2", "TAB: 4", "TAB: 8"]
-        atual = self.editor.indentacao
-        rotulo = atual.rotulo()
-        escolha = dialogos.escolher(
-            self, "Indentacao", "Usar:", opcoes,
-            opcoes.index(rotulo) if rotulo in opcoes else 1)
-        if escolha is None:
-            return
-        tipo, _, largura = escolha.partition(": ")
-        self.cfg["usar_espacos"] = tipo == "Espacos"
-        self.definir_tabulacao(int(largura))
-        self.vinculos.sincronizar_alternaveis(self.cfg)
-
-    def _mostrar_indentacao(self) -> None:
-        self.barra.definir_indentacao(self.editor.indentacao.usa_espacos,
-                                      self.editor.indentacao.largura)
-
-    def converter_tab_para_espacos(self) -> None:
-        from textforge.editor import indentacao as imod
-        largura = self.editor.indentacao.largura
-        self.editor.aplicar_em_linhas(
-            lambda linhas: [imod.tab_para_espacos(l, largura) for l in linhas])
-
-    def converter_espacos_para_tab(self) -> None:
-        from textforge.editor import indentacao as imod
-        largura = self.editor.indentacao.largura
-        self.editor.aplicar_em_linhas(
-            lambda linhas: [imod.espacos_para_tab(l, largura) for l in linhas])
-
-    # -- linhas ------------------------------------------------------------
-
-    def copiar_linha(self) -> None:
-        """Copia a linha inteira sem precisar selecionar (requisito 40)."""
-        cursor = self.editor.textCursor()
-        if cursor.hasSelection():
-            self.editor.copy()
-            return
-        from PySide6.QtWidgets import QApplication
-        QApplication.clipboard().setText(cursor.block().text() + "\n")
-        self.barra.showMessage("Linha copiada", 1500)
-
-    def prefixar_linhas(self) -> None:
-        from textforge.editor import operacoes_linha as ops
-        texto = dialogos.pedir_texto(self, "Inserir no inicio das linhas",
-                                     "Texto a inserir no inicio de cada linha:")
-        if not texto:
-            return
-        self.editor.aplicar_em_linhas(lambda l: ops.prefixar(l, texto))
-
-    def sufixar_linhas(self) -> None:
-        from textforge.editor import operacoes_linha as ops
-        texto = dialogos.pedir_texto(self, "Inserir no fim das linhas",
-                                     "Texto a inserir no fim de cada linha:")
-        if not texto:
-            return
-        self.editor.aplicar_em_linhas(lambda l: ops.sufixar(l, texto))
-
-    # -- navegacao ---------------------------------------------------------
-
-    def ir_para_linha(self) -> None:
-        escolha = dialogos.pedir_linha(
-            self, self.editor.document().blockCount(),
-            self.editor.textCursor().blockNumber())
-        if escolha is None:
-            return
-        self.editor.ir_para_linha(*escolha)
-        self.editor.setFocus()
-
-    def _atualizar_titulo(self) -> None:
-        doc = self.documento
-        marca = "*" if doc.modificado else ""
-        local = f" - {doc.caminho.parent}" if doc.caminho else ""
-        self.setWindowTitle(f"{marca}{doc.nome}{local} - {APP}")
+        self.abas.aplicar_configuracao(self.cfg)
 
     # ==================================================================
-    # Arquivo (etapa 3)
+    # Abas
     # ==================================================================
 
-    def _adotar(self, doc: Documento) -> None:
-        """Passa a editar `doc`: liga o QTextDocument ao editor e a barra."""
-        anterior = getattr(self, "documento", None)
-        if anterior is not None and anterior.caminho is not None:
-            self.vigia.esquecer(anterior.caminho)
+    def nova_aba(self) -> Aba:
+        return self.abas.adicionar(Documento.novo(self.cfg))
 
-        self.documento = doc
-        self.editor.setDocument(doc.qt)
-        self.editor.setReadOnly(doc.somente_leitura)
-        if self.cfg.get("detectar_indentacao", True):
-            self.editor.definir_indentacao(doc.indentacao)
-        doc.qt.modificationChanged.connect(self._atualizar_titulo)
-        doc.metadados_mudaram.connect(self._mostrar_metadados)
-
-        if doc.caminho is not None and doc.assinatura is not None:
-            self.vigia.acompanhar(doc.caminho, doc.assinatura)
-            configuracao.registrar_recente(self.cfg, doc.caminho)
-
+    def _ao_trocar_de_aba(self, aba: Aba | None) -> None:
+        if aba is None:
+            return
+        editor = aba.editor
+        # Nada de conectar/desconectar aqui: o gerenciador de abas ja' repassa os
+        # sinais SO' da aba ativa (ver `_repassar` em abas.py). Trocar as conexoes
+        # a cada aba gerava RuntimeWarning do PySide na primeira troca.
+        cursor = editor.textCursor()
+        self.barra.definir_posicao(cursor.blockNumber(),
+                                   cursor.positionInBlock())
         self._mostrar_metadados()
-        self._atualizar_titulo()
-        self.editor.setFocus()
+        editor.setFocus()
 
-    def _mostrar_metadados(self) -> None:
-        doc = self.documento
-        perfil = doc.perfil
-        self.barra.definir_codificacao(
-            perfil.rotulo if perfil else codificacao.ROTULOS.get(doc.codec,
-                                                                 doc.codec),
-            suspeita=bool(perfil and perfil.suspeito))
-        self.barra.definir_fim_de_linha(
-            codificacao.ROTULO_EOL.get(doc.fim_de_linha, "CRLF"),
-            misto=doc.fins_de_linha_mistos)
-        self.barra.definir_indentacao(doc.indentacao.usa_espacos,
-                                      doc.indentacao.largura)
-        self.barra.definir_linguagem("Texto")
-        self.barra.definir_aviso(doc.aviso)
-        self._atualizar_titulo()
+    def fechar_aba_atual(self) -> None:
+        indice = self.abas.currentIndex()
+        if indice >= 0 and self.abas.fechar(indice) and self.abas.count() == 0:
+            self.nova_aba()
 
-    def _pode_descartar(self) -> bool:
-        """Pergunta antes de perder alteracoes nao salvas."""
-        if not self.documento.modificado:
+    def fechar_todas_as_abas(self) -> None:
+        if self.abas.fechar_todas():
+            self.nova_aba()
+
+    def _pode_fechar_aba(self, aba: Aba) -> bool:
+        """Pergunta antes de perder alteracoes de UMA aba."""
+        doc = aba.documento
+        if not doc.modificado:
+            self._desmontar(doc)
             return True
+        self.abas.setCurrentWidget(aba)
         escolha = QMessageBox.question(
             self, APP,
-            f"<b>{self.documento.nome}</b> tem alteracoes nao salvas.<br><br>"
-            "Salvar antes de continuar?",
+            f"<b>{doc.nome}</b> tem alteracoes nao salvas.<br><br>"
+            "Salvar antes de fechar?",
             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Save)
         if escolha == QMessageBox.StandardButton.Cancel:
             return False
-        if escolha == QMessageBox.StandardButton.Save:
-            return self.salvar()
+        if escolha == QMessageBox.StandardButton.Save and not self.salvar():
+            return False
+        self._desmontar(doc)
         return True
 
-    def novo_documento(self) -> None:
-        if not self._pode_descartar():
-            return
-        self._adotar(Documento.novo(self.cfg))
+    def _desmontar(self, doc: Documento) -> None:
+        if doc.caminho is not None:
+            self.vigia.esquecer(doc.caminho)
+        sessao_mod.esquecer_copia(doc)
+
+    # ==================================================================
+    # Arquivo
+    # ==================================================================
 
     def escolher_e_abrir(self) -> None:
-        from PySide6.QtWidgets import QFileDialog
-        inicial = str(self.documento.caminho.parent) if self.documento.caminho \
-            else ""
-        caminho, _ = QFileDialog.getOpenFileName(
-            self, "Abrir arquivo", inicial, FILTRO_DE_ARQUIVOS)
-        if caminho:
+        atual = self.abas.documento_atual()
+        inicial = str(atual.caminho.parent) if (atual and atual.caminho) else ""
+        caminhos, _ = QFileDialog.getOpenFileNames(
+            self, "Abrir arquivo(s)", inicial, FILTRO_DE_ARQUIVOS)
+        for caminho in caminhos:
             self.abrir_arquivo(caminho)
 
     def abrir_arquivo(self, caminho: str, linha: int = 0,
                       coluna: int = 0) -> bool:
-        if not self._pode_descartar():
-            return False
+        """Abre numa aba nova, ou foca a aba que ja' tem este arquivo."""
+        try:
+            alvo = pathlib.Path(caminho)
+            chave = str(alvo.resolve()).lower()
+        except OSError:
+            chave = str(caminho).lower()
+        existente = self.abas.indice_por_chave(chave)
+        if existente >= 0:
+            self.abas.setCurrentIndex(existente)
+            if linha:
+                self.abas.editor_atual().ir_para_linha(linha, coluna)
+            return True
+
         try:
             doc = Documento.abrir(caminho, self.cfg)
         except OSError as exc:
             dialogos.avisar(self, f"Nao foi possivel abrir {caminho}.", str(exc))
             return False
-        self._adotar(doc)
+
+        # Uma aba vazia e intocada e' descartada ao abrir um arquivo: senao o
+        # usuario acumula "Sem titulo 1" a cada arquivo que abre.
+        vazia = self._aba_vazia_descartavel()
+        aba = self.abas.adicionar(doc)
+        if vazia is not None and vazia is not aba:
+            self.abas.removeTab(self.abas.indexOf(vazia))
+            vazia.deleteLater()
+
+        if doc.caminho is not None and doc.assinatura is not None:
+            self.vigia.acompanhar(doc.caminho, doc.assinatura)
+            configuracao.registrar_recente(self.cfg, doc.caminho)
         if doc.binario:
             dialogos.avisar(
                 self, f"{doc.nome}: {doc.aviso}",
-                "O visualizador hexadecimal entra numa etapa seguinte. "
-                "O conteudo NAO foi exibido como texto para nao mostrar "
+                "O visualizador hexadecimal entra numa etapa seguinte. O "
+                "conteudo NAO foi exibido como texto para nao mostrar "
                 "caracteres corrompidos.")
         if linha:
-            self.editor.ir_para_linha(linha, coluna)
+            aba.editor.ir_para_linha(linha, coluna)
+        self._mostrar_metadados()
         return True
 
+    def _aba_vazia_descartavel(self) -> Aba | None:
+        aba = self.abas.aba_atual()
+        if (aba is not None and aba.documento.caminho is None
+                and not aba.documento.modificado
+                and not aba.documento.texto().strip()):
+            return aba
+        return None
+
     def salvar(self) -> bool:
-        """Grava. Devolve False se o usuario cancelou ou algo impediu."""
-        doc = self.documento
+        doc = self.abas.documento_atual()
+        if doc is None:
+            return False
         if doc.caminho is None:
             return self.salvar_como()
         if doc.somente_leitura:
@@ -505,33 +485,48 @@ class JanelaPrincipal(QMainWindow):
             return False
         if self.cfg.get("aparar_espaco_final"):
             doc.aparar_espaco_final()
-        if doc.fins_de_linha_mistos and not self._confirmar_eol_misto():
+        if doc.fins_de_linha_mistos and not self._confirmar_eol_misto(doc):
             return False
         try:
             doc.salvar()
         except arquivos.AlteradoNoDisco:
-            return self._resolver_alteracao_externa(ao_salvar=True)
+            return self._resolver_alteracao_externa(doc, ao_salvar=True)
         except UnicodeEncodeError:
-            return self._resolver_perda_ao_salvar()
+            return self._resolver_perda_ao_salvar(doc)
         except OSError as exc:
             dialogos.avisar(self, "Nao foi possivel salvar.", str(exc))
             return False
         self.vigia.confirmar(doc.caminho, doc.assinatura)
+        sessao_mod.esquecer_copia(doc)
         self.barra.showMessage(f"Salvo: {doc.nome}", 2000)
         self._mostrar_metadados()
         return True
 
-    def _confirmar_eol_misto(self) -> bool:
+    def salvar_todos(self) -> bool:
+        """Grava todas as abas modificadas. Para na primeira que falhar."""
+        atual = self.abas.currentIndex()
+        gravadas = 0
+        for aba in self.abas.com_pendencias():
+            self.abas.setCurrentWidget(aba)
+            if not self.salvar():
+                self.abas.setCurrentIndex(atual)
+                return False
+            gravadas += 1
+        self.abas.setCurrentIndex(atual)
+        self.barra.showMessage(f"{gravadas} arquivo(s) salvo(s)", 2000)
+        return True
+
+    def _confirmar_eol_misto(self, doc: Documento) -> bool:
         """Avisa se salvar vai normalizar os fins de linha de um arquivo misto.
 
         So' pergunta quando a normalizacao e' inevitavel (o numero de linhas
         mudou). Enquanto a correspondencia linha-a-linha existe, o documento
         preserva cada quebra e nao ha' nada a avisar.
         """
-        self.documento.bytes_para_salvar(substituir=True)   # calcula a flag
-        if not self.documento.eol_sera_normalizado:
+        doc.bytes_para_salvar(substituir=True)      # calcula a flag
+        if not doc.eol_sera_normalizado:
             return True
-        rotulo = codificacao.ROTULO_EOL.get(self.documento.fim_de_linha, "CRLF")
+        rotulo = codificacao.ROTULO_EOL.get(doc.fim_de_linha, "CRLF")
         return dialogos.confirmar(
             self, "Fins de linha misturados",
             f"Este arquivo tem fins de linha misturados, e as linhas inseridas "
@@ -539,8 +534,7 @@ class JanelaPrincipal(QMainWindow):
             f"Salvar agora vai converter TODAS as quebras para <b>{rotulo}</b>. "
             f"Continuar?", perigoso=True)
 
-    def _resolver_perda_ao_salvar(self) -> bool:
-        doc = self.documento
+    def _resolver_perda_ao_salvar(self, doc: Documento) -> bool:
         perdas = codificacao.conferir_conversao(doc.texto(), doc.codec)
         escolha = dialogos.confirmar_perda_de_caracteres(self, doc.codec, perdas)
         if escolha == "cancelar":
@@ -558,8 +552,9 @@ class JanelaPrincipal(QMainWindow):
         return True
 
     def salvar_como(self) -> bool:
-        from PySide6.QtWidgets import QFileDialog
-        doc = self.documento
+        doc = self.abas.documento_atual()
+        if doc is None:
+            return False
         sugestao = str(doc.caminho) if doc.caminho else doc.nome
         caminho, _ = QFileDialog.getSaveFileName(
             self, "Salvar como", sugestao, FILTRO_DE_ARQUIVOS)
@@ -568,19 +563,20 @@ class JanelaPrincipal(QMainWindow):
         try:
             doc.salvar_como(caminho)
         except UnicodeEncodeError:
-            return self._resolver_perda_ao_salvar()
+            return self._resolver_perda_ao_salvar(doc)
         except OSError as exc:
             dialogos.avisar(self, "Nao foi possivel salvar.", str(exc))
             return False
         self.vigia.acompanhar(doc.caminho, doc.assinatura)
         configuracao.registrar_recente(self.cfg, doc.caminho)
+        self.abas.atualizar_todos_os_titulos()
         self.barra.showMessage(f"Salvo: {doc.nome}", 2000)
         self._mostrar_metadados()
         return True
 
     def recarregar(self) -> None:
-        doc = self.documento
-        if doc.caminho is None:
+        doc = self.abas.documento_atual()
+        if doc is None or doc.caminho is None:
             return
         if doc.modificado and not dialogos.confirmar(
                 self, "Recarregar",
@@ -599,7 +595,9 @@ class JanelaPrincipal(QMainWindow):
         self.barra.showMessage("Recarregado do disco", 2000)
 
     def reabrir_como(self) -> None:
-        doc = self.documento
+        doc = self.abas.documento_atual()
+        if doc is None:
+            return
         if doc.caminho is None:
             dialogos.avisar(self, "Este documento ainda nao foi salvo.",
                             "Nao ha' arquivo no disco para reler.")
@@ -616,7 +614,7 @@ class JanelaPrincipal(QMainWindow):
             return
         codec = next(c for c, r in codificacao.OFERECIDAS if r == escolha)
         try:
-            doc.reabrir_como(codec)
+            doc.reabrir_como("utf-8-sig" if escolha.endswith("BOM") else codec)
         except (OSError, LookupError) as exc:
             dialogos.avisar(self, "Nao foi possivel reabrir.", str(exc))
             return
@@ -625,7 +623,9 @@ class JanelaPrincipal(QMainWindow):
 
     def escolher_codificacao(self) -> None:
         """Converte a codificacao de GRAVACAO, avisando antes de perder algo."""
-        doc = self.documento
+        doc = self.abas.documento_atual()
+        if doc is None:
+            return
         rotulos = [r for _, r in codificacao.OFERECIDAS]
         escolha = dialogos.escolher(self, "Converter codificacao",
                                     "Gravar este arquivo em:", rotulos)
@@ -633,8 +633,8 @@ class JanelaPrincipal(QMainWindow):
             return
         codec = next(c for c, r in codificacao.OFERECIDAS if r == escolha)
         com_bom = escolha.endswith("BOM")
-        perdas = doc.definir_codificacao(
-            "utf-8" if codec == "utf-8-sig" else codec, com_bom=com_bom)
+        alvo = "utf-8" if codec == "utf-8-sig" else codec
+        perdas = doc.definir_codificacao(alvo, com_bom=com_bom)
         if perdas:
             resposta = dialogos.confirmar_perda_de_caracteres(self, codec, perdas)
             if resposta == "cancelar":
@@ -642,38 +642,208 @@ class JanelaPrincipal(QMainWindow):
             if resposta == "utf8":
                 doc.definir_codificacao("utf-8", com_bom=False)
             else:
-                doc.definir_codificacao(
-                    "utf-8" if codec == "utf-8-sig" else codec,
-                    com_bom=com_bom, substituir=True)
+                doc.definir_codificacao(alvo, com_bom=com_bom, substituir=True)
         self._mostrar_metadados()
 
     def definir_eol(self, fim_de_linha: str) -> None:
-        self.documento.definir_fim_de_linha(fim_de_linha)
-        self._mostrar_metadados()
+        doc = self.abas.documento_atual()
+        if doc is not None:
+            doc.definir_fim_de_linha(fim_de_linha)
+            self._mostrar_metadados()
 
     def mostrar_propriedades(self) -> None:
-        dialogos.propriedades(self, self.documento.propriedades())
+        doc = self.abas.documento_atual()
+        if doc is not None:
+            dialogos.propriedades(self, doc.propriedades())
 
     def abrir_local_do_arquivo(self) -> None:
-        doc = self.documento
-        if doc.caminho is None:
+        doc = self.abas.documento_atual()
+        if doc is None or doc.caminho is None:
             dialogos.avisar(self, "Este documento ainda nao foi salvo.")
             return
         if not arquivos.abrir_no_explorer(doc.caminho):
             dialogos.avisar(self, "Nao foi possivel abrir o Explorer.")
 
     # ==================================================================
+    # Barra de status
+    # ==================================================================
+
+    def _mostrar_metadados(self) -> None:
+        doc = self.abas.documento_atual()
+        if doc is None:
+            self.barra.limpar()
+            return
+        perfil = doc.perfil
+        self.barra.definir_codificacao(
+            perfil.rotulo if perfil else codificacao.ROTULOS.get(doc.codec,
+                                                                 doc.codec),
+            suspeita=bool(perfil and perfil.suspeito))
+        self.barra.definir_fim_de_linha(
+            codificacao.ROTULO_EOL.get(doc.fim_de_linha, "CRLF"),
+            misto=doc.fins_de_linha_mistos)
+        self.barra.definir_indentacao(doc.indentacao.usa_espacos,
+                                      doc.indentacao.largura)
+        self.barra.definir_linguagem("Texto")
+        self.barra.definir_aviso(doc.aviso)
+        self._atualizar_titulo()
+
+    def _atualizar_titulo(self) -> None:
+        doc = self.abas.documento_atual()
+        if doc is None:
+            self.setWindowTitle(APP)
+            return
+        marca = "*" if doc.modificado else ""
+        local = f" - {doc.caminho.parent}" if doc.caminho else ""
+        pendentes = len(self.abas.com_pendencias())
+        extra = f"  [{pendentes} nao salvos]" if pendentes > 1 else ""
+        self.setWindowTitle(f"{marca}{doc.nome}{local} - {APP}{extra}")
+
+    def _escolher_eol(self) -> None:
+        rotulos = ["Windows (CRLF)", "Unix (LF)", "Mac classico (CR)"]
+        valores = [codificacao.CRLF, codificacao.LF, codificacao.CR]
+        doc = self.abas.documento_atual()
+        atual = valores.index(doc.fim_de_linha) if (
+            doc and doc.fim_de_linha in valores) else 0
+        escolha = dialogos.escolher(self, "Fim de linha", "Gravar usando:",
+                                    rotulos, atual)
+        if escolha is not None:
+            self.definir_eol(valores[rotulos.index(escolha)])
+
+    # ==================================================================
+    # Comandos que agem no editor da aba ativa
+    # ==================================================================
+
+    def _aplicar_em_linhas(self, funcao) -> None:
+        editor = self.abas.editor_atual()
+        if editor is not None:
+            editor.aplicar_em_linhas(funcao)
+
+    def _converter_caixa(self, funcao) -> None:
+        editor = self.abas.editor_atual()
+        if editor is not None:
+            editor.converter_caixa(funcao)
+
+    def _marcador(self, adiante: bool) -> None:
+        editor = self.abas.editor_atual()
+        if editor is not None:
+            editor.ir_para_marcador(adiante=adiante)
+
+    def mover_linha(self, para_baixo: bool) -> None:
+        editor = self.abas.editor_atual()
+        if editor is not None:
+            editor.mover_linha(para_baixo=para_baixo)
+
+    def excluir_selecao(self) -> None:
+        editor = self.abas.editor_atual()
+        if editor is not None:
+            editor.textCursor().removeSelectedText()
+
+    def copiar_linha(self) -> None:
+        """Copia a linha inteira sem precisar selecionar (requisito 40)."""
+        editor = self.abas.editor_atual()
+        if editor is None:
+            return
+        cursor = editor.textCursor()
+        if cursor.hasSelection():
+            editor.copy()
+            return
+        QApplication.clipboard().setText(cursor.block().text() + "\n")
+        self.barra.showMessage("Linha copiada", 1500)
+
+    def prefixar_linhas(self) -> None:
+        from textforge.editor import operacoes_linha as ops
+        texto = dialogos.pedir_texto(self, "Inserir no inicio das linhas",
+                                     "Texto a inserir no inicio de cada linha:")
+        if texto:
+            self._aplicar_em_linhas(lambda l: ops.prefixar(l, texto))
+
+    def sufixar_linhas(self) -> None:
+        from textforge.editor import operacoes_linha as ops
+        texto = dialogos.pedir_texto(self, "Inserir no fim das linhas",
+                                     "Texto a inserir no fim de cada linha:")
+        if texto:
+            self._aplicar_em_linhas(lambda l: ops.sufixar(l, texto))
+
+    def ir_para_linha(self) -> None:
+        editor = self.abas.editor_atual()
+        if editor is None:
+            return
+        escolha = dialogos.pedir_linha(self, editor.document().blockCount(),
+                                       editor.textCursor().blockNumber())
+        if escolha is None:
+            return
+        editor.ir_para_linha(*escolha)
+        editor.setFocus()
+
+    # -- tabulacao ---------------------------------------------------------
+
+    def definir_tabulacao(self, largura: int) -> None:
+        self.cfg["tabulacao"] = largura
+        nova = Indentacao(usa_espacos=bool(self.cfg.get("usar_espacos", True)),
+                          largura=largura)
+        for aba in self.abas.abas():
+            aba.editor.definir_indentacao(nova)
+            aba.documento.definir_indentacao(nova)
+        self._mostrar_metadados()
+
+    def alternar_usar_tab(self) -> None:
+        self.cfg["usar_espacos"] = not bool(self.cfg.get("usar_espacos", True))
+        self.definir_tabulacao(int(self.cfg.get("tabulacao", 4)))
+        self.vinculos.sincronizar_alternaveis(self.cfg)
+
+    def escolher_tabulacao(self) -> None:
+        opcoes = ["Espacos: 2", "Espacos: 4", "Espacos: 8",
+                  "TAB: 2", "TAB: 4", "TAB: 8"]
+        doc = self.abas.documento_atual()
+        rotulo = doc.indentacao.rotulo() if doc else "Espacos: 4"
+        escolha = dialogos.escolher(
+            self, "Indentacao", "Usar:", opcoes,
+            opcoes.index(rotulo) if rotulo in opcoes else 1)
+        if escolha is None:
+            return
+        tipo, _, largura = escolha.partition(": ")
+        self.cfg["usar_espacos"] = tipo == "Espacos"
+        self.definir_tabulacao(int(largura))
+        self.vinculos.sincronizar_alternaveis(self.cfg)
+
+    def converter_tab_para_espacos(self) -> None:
+        from textforge.editor import indentacao as imod
+        editor = self.abas.editor_atual()
+        if editor is None:
+            return
+        largura = editor.indentacao.largura
+        editor.aplicar_em_linhas(
+            lambda linhas: [imod.tab_para_espacos(l, largura) for l in linhas])
+
+    def converter_espacos_para_tab(self) -> None:
+        from textforge.editor import indentacao as imod
+        editor = self.abas.editor_atual()
+        if editor is None:
+            return
+        largura = editor.indentacao.largura
+        editor.aplicar_em_linhas(
+            lambda linhas: [imod.espacos_para_tab(l, largura) for l in linhas])
+
+    # ==================================================================
     # Alteracao externa (requisito 27)
     # ==================================================================
 
-    def _ao_mudar_no_disco(self, caminho: str, _assinatura) -> None:
-        if (self.documento.caminho is None
-                or str(self.documento.caminho) != caminho):
-            return
-        self._resolver_alteracao_externa()
+    def _aba_do_caminho(self, caminho: str) -> Aba | None:
+        for aba in self.abas.abas():
+            if (aba.documento.caminho is not None
+                    and str(aba.documento.caminho) == caminho):
+                return aba
+        return None
 
-    def _resolver_alteracao_externa(self, *, ao_salvar: bool = False) -> bool:
-        doc = self.documento
+    def _ao_mudar_no_disco(self, caminho: str, _assinatura) -> None:
+        aba = self._aba_do_caminho(caminho)
+        if aba is None:
+            return
+        self.abas.setCurrentWidget(aba)
+        self._resolver_alteracao_externa(aba.documento)
+
+    def _resolver_alteracao_externa(self, doc: Documento, *,
+                                    ao_salvar: bool = False) -> bool:
         escolha = dialogos.alteracao_externa(
             self, doc.nome, doc.descrever_mudanca_externa(), doc.modificado)
         if escolha == "recarregar":
@@ -693,7 +863,8 @@ class JanelaPrincipal(QMainWindow):
             return False
         # "manter": pausa o aviso para este arquivo e, se veio de um salvamento,
         # grava por cima -- foi uma escolha explicita do usuario.
-        self.vigia.pausar(doc.caminho) if doc.caminho else None
+        if doc.caminho is not None:
+            self.vigia.pausar(doc.caminho)
         if ao_salvar:
             try:
                 doc.salvar(forcar=True)
@@ -708,13 +879,123 @@ class JanelaPrincipal(QMainWindow):
         return False
 
     def _ao_remover_do_disco(self, caminho: str) -> None:
-        if (self.documento.caminho is None
-                or str(self.documento.caminho) != caminho):
+        aba = self._aba_do_caminho(caminho)
+        if aba is None:
             return
         self.barra.definir_aviso("O arquivo foi apagado ou renomeado no disco")
         dialogos.avisar(
-            self, f"{self.documento.nome} nao esta' mais no disco.",
+            self, f"{aba.documento.nome} nao esta' mais no disco.",
             "O conteudo continua aberto aqui. Use Salvar para grava-lo de novo.")
+
+    # ==================================================================
+    # Sessao e recuperacao (requisitos 16 e 17)
+    # ==================================================================
+
+    def _iniciar_sessao(self) -> None:
+        """Oferece a recuperacao e restaura a sessao anterior, nessa ordem.
+
+        A recuperacao vem PRIMEIRO: ela representa trabalho que o usuario pode
+        perder, e a sessao e' apenas comodidade.
+        """
+        if self.trava.sessao_anterior_morreu():
+            self._oferecer_recuperacao()
+        self.trava.adquirir()
+        self._restaurar_sessao()
+        intervalo = int(self.cfg.get("recuperacao_intervalo_s", 30))
+        if intervalo > 0:
+            self._temporizador_de_recuperacao.start(intervalo * 1000)
+
+    def _oferecer_recuperacao(self) -> None:
+        recuperaveis = sessao_mod.listar_recuperaveis()
+        if not recuperaveis:
+            return
+        nomes = "<br>".join(
+            f"&bull; {r.nome} <span style='color:gray'>({r.quando_texto})"
+            f"</span>" for r in recuperaveis[:12])
+        if len(recuperaveis) > 12:
+            nomes += f"<br>&bull; e mais {len(recuperaveis) - 12}"
+        if not dialogos.confirmar(
+                self, "Recuperar arquivos",
+                f"Existem <b>{len(recuperaveis)}</b> arquivo(s) nao salvo(s) da "
+                f"ultima sessao:<br><br>{nomes}<br><br>Deseja recupera-los?"):
+            sessao_mod.limpar_recuperacao()
+            return
+        for r in recuperaveis:
+            doc = Documento.novo(self.cfg)
+            # A copia guarda BYTES ja' codificados, entao a recuperacao passa pela
+            # mesma decodificacao de sempre: um arquivo cp1252 volta cp1252.
+            perfil = codificacao.detectar(
+                r.bytes_do_conteudo,
+                self.cfg.get("codificacao_preferida_legado", "cp1252"))
+            doc.definir_texto(perfil.texto, marcar_modificado=True)
+            doc.codec = r.codec or perfil.codec
+            doc.bom = r.bom
+            doc.fim_de_linha = r.fim_de_linha or codificacao.CRLF
+            doc.perfil = perfil
+            if r.caminho_original:
+                doc.caminho = pathlib.Path(r.caminho_original)
+                # NAO carrega a assinatura do disco: o arquivo de la' e' a versao
+                # ANTIGA, e o conteudo recuperado e' mais novo. Deixar a
+                # assinatura vazia faz o primeiro salvamento avisar sobre a
+                # diferenca, que e' o comportamento correto.
+            else:
+                doc.rotulo_sem_titulo = r.nome
+            self.abas.adicionar(doc)
+        sessao_mod.limpar_recuperacao()
+        self.barra.showMessage(
+            f"{len(recuperaveis)} arquivo(s) recuperado(s). Confira antes de "
+            f"salvar.", 8000)
+
+    def _restaurar_sessao(self) -> None:
+        if not self.cfg.get("restaurar_sessao", True):
+            return
+        sessao = sessao_mod.carregar_sessao()
+        vivas = sessao_mod.abas_existentes(sessao)
+        if not vivas:
+            return
+        for estado in vivas:
+            if not self.abrir_arquivo(estado.caminho):
+                continue
+            editor = self.abas.editor_atual()
+            if editor is None:
+                continue
+            cursor = editor.textCursor()
+            cursor.setPosition(min(estado.cursor,
+                                   editor.document().characterCount() - 1))
+            editor.setTextCursor(cursor)
+            editor.verticalScrollBar().setValue(estado.rolagem)
+        if 0 <= sessao.ativa < self.abas.count():
+            self.abas.setCurrentIndex(sessao.ativa)
+        log.info("sessao restaurada: %d aba(s)", len(vivas))
+
+    def _capturar_sessao(self) -> sessao_mod.Sessao:
+        estados: list[sessao_mod.EstadoDeAba] = []
+        for aba in self.abas.abas():
+            doc = aba.documento
+            if doc.caminho is None:
+                continue          # documento sem arquivo vive na recuperacao
+            estados.append(sessao_mod.EstadoDeAba(
+                caminho=str(doc.caminho),
+                cursor=aba.editor.textCursor().position(),
+                rolagem=aba.editor.verticalScrollBar().value(),
+                codec=doc.codec,
+                fim_de_linha=doc.fim_de_linha,
+                view=aba.view_atual()))
+        return sessao_mod.Sessao(abas=estados,
+                                 ativa=max(0, self.abas.currentIndex()))
+
+    def _gravar_recuperacao(self) -> None:
+        """Copia de seguranca periodica dos documentos MODIFICADOS."""
+        gravados = 0
+        for aba in self.abas.com_pendencias():
+            doc = aba.documento
+            if not sessao_mod.pasta_permitida(doc.caminho, self.cfg):
+                continue
+            if sessao_mod.gravar_copia(doc) is not None:
+                gravados += 1
+        if gravados:
+            log.debug("copia de recuperacao gravada para %d documento(s)",
+                      gravados)
 
     # ==================================================================
     # Arrastar e soltar (requisito 19)
@@ -724,19 +1005,28 @@ class JanelaPrincipal(QMainWindow):
         if evento.mimeData().hasUrls():
             evento.acceptProposedAction()
 
+    def dragMoveEvent(self, evento) -> None:                # noqa: N802 - Qt
+        if evento.mimeData().hasUrls():
+            evento.acceptProposedAction()
+
     def dropEvent(self, evento) -> None:                    # noqa: N802 - Qt
         locais = [u.toLocalFile() for u in evento.mimeData().urls()
                   if u.isLocalFile()]
         if not locais:
             return
         evento.acceptProposedAction()
-        # Uma aba so' nesta etapa: abre o primeiro e avisa sobre o resto, em vez
-        # de descartar em silencio os arquivos que o usuario arrastou.
-        self.abrir_arquivo(locais[0])
-        if len(locais) > 1:
+        pastas = [c for c in locais if pathlib.Path(c).is_dir()]
+        arquivos_ = [c for c in locais if not pathlib.Path(c).is_dir()]
+        for caminho in arquivos_:
+            self.abrir_arquivo(caminho)
+        if pastas:
             self.barra.showMessage(
-                f"{len(locais) - 1} arquivo(s) ignorado(s): as abas entram na "
-                f"etapa 4", 4000)
+                f"{len(pastas)} pasta(s) ignorada(s): o painel Arquivos entra "
+                f"numa etapa seguinte", 4000)
+
+    # ==================================================================
+    # Ajuda
+    # ==================================================================
 
     def mostrar_sobre(self) -> None:
         QMessageBox.about(
@@ -750,13 +1040,15 @@ class JanelaPrincipal(QMainWindow):
 
     def abrir_log(self) -> None:
         caminho = configuracao.caminho_log()
-        QMessageBox.information(
-            self, "Log de diagnostico",
-            f"O log fica em:<br><code>{caminho}</code><br><br>"
-            "Ele registra caminhos, tamanhos e erros &mdash; nunca o conteudo "
-            "dos seus arquivos.")
+        if caminho.is_file():
+            self.abrir_arquivo(str(caminho))
+            return
+        dialogos.avisar(self, "O log ainda nao foi criado.",
+                        f"Ele sera' gravado em {caminho}")
 
-    # -- geometria ---------------------------------------------------------
+    # ==================================================================
+    # Geometria e fechamento
+    # ==================================================================
 
     def _restaurar_geometria(self) -> None:
         bruto = self.cfg.get("geometria") or ""
@@ -780,10 +1072,21 @@ class JanelaPrincipal(QMainWindow):
             log.warning("estado da janela ilegivel; ignorando")
 
     def closeEvent(self, event: QCloseEvent) -> None:       # noqa: N802 - Qt
-        if not self._pode_descartar():
+        # A sessao e' capturada ANTES de fechar as abas: depois, nao ha' mais o
+        # que gravar.
+        instantaneo = self._capturar_sessao()
+        if not self.abas.fechar_todas():
             event.ignore()
             return
+
+        self._temporizador_de_recuperacao.stop()
         self.vigia.parar()
+        try:
+            sessao_mod.salvar_sessao(instantaneo)
+        except OSError as exc:
+            log.warning("nao foi possivel salvar a sessao: %s", exc)
+        self.trava.liberar()
+
         self.cfg["geometria"] = bytes(
             self.saveGeometry().toBase64()).decode("ascii")
         self.cfg["estado_da_janela"] = bytes(
@@ -791,6 +1094,5 @@ class JanelaPrincipal(QMainWindow):
         try:
             configuracao.salvar(self.cfg)
         except OSError as exc:
-            # Nunca impedir o fechamento por causa das preferencias.
             log.warning("nao foi possivel salvar a configuracao: %s", exc)
         super().closeEvent(event)

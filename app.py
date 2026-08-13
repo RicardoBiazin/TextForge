@@ -63,7 +63,11 @@ def main(argv: list[str] | None = None) -> int:
     app.setStyle("Fusion")
 
     from textforge.interface.janela import JanelaPrincipal
-    janela = JanelaPrincipal(cfg)
+    # A sessao so' e' restaurada quando o TextForge e' aberto SEM arquivos: quem
+    # deu duplo-clique num arquivo quer aquele arquivo, e nao as 12 abas da vez
+    # anterior. E na autoverificacao do build, nunca.
+    janela = JanelaPrincipal(
+        cfg, restaurar_sessao=not args.alvos and not args.autoverificacao)
 
     servidor = None
     if not args.nova_janela and not args.autoverificacao:

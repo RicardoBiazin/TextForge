@@ -76,8 +76,19 @@ with appdata_temporario():
     secao("3 - editor no centro e comandos ligados a ele")
 
     from textforge.editor.widget import EditorDeTexto             # noqa: E402
-    checa(isinstance(janela.centralWidget(), EditorDeTexto),
-          "o widget central e' o editor")
+    from textforge.interface.abas import GerenciadorAbas          # noqa: E402
+    checa(isinstance(janela.centralWidget(), GerenciadorAbas),
+          "o widget central e' o gerenciador de abas")
+    checa(isinstance(janela.editor, EditorDeTexto),
+          "e janela.editor aponta para o editor da aba ativa")
+    checa_igual(janela.abas.count(), 1,
+                "sempre existe pelo menos UMA aba (a invariante da janela)")
+
+    # A invariante existe para os ~50 comandos nao precisarem tratar "nenhum
+    # documento aberto": fechar a ultima aba abre uma vazia no lugar.
+    janela.fechar_aba_atual()
+    checa_igual(janela.abas.count(), 1,
+                "fechar a ultima aba cria uma vazia no lugar")
 
     # O zoom mora no EDITOR, nao na janela: e' o editor que tem a fonte e o
     # Ctrl+roda. A janela apenas encaminha o comando de menu.
@@ -175,25 +186,29 @@ with appdata_temporario():
     # Fechar com alteracoes pendentes ABRE UM DIALOGO MODAL, e em modo offscreen
     # nao ha' ninguem para clicar nele -- a suite travaria para sempre. Testamos a
     # LIGACAO substituindo a pergunta, e nao o dialogo em si.
-    janela.editor.setPlainText("alteracao nao salva")
-    perguntou = {"n": 0}
-    real = janela._pode_descartar
+    janela.editor.textCursor().insertText("alteracao nao salva")
+    checa(janela.documento.modificado, "o documento esta' modificado")
 
-    def recusar() -> bool:
+    perguntou = {"n": 0}
+    real = janela.abas.pode_fechar
+
+    def recusar(_aba) -> bool:
         perguntou["n"] += 1
         return False
 
-    janela._pode_descartar = recusar
+    janela.abas.pode_fechar = recusar
     janela.close()
-    checa_igual(perguntou["n"], 1, "fechar consulta _pode_descartar")
-    checa(janela.isVisible() or True,
-          "e a janela NAO fecha quando a resposta e' 'cancelar'")
-    janela._pode_descartar = real
+    checa(perguntou["n"] >= 1,
+          "fechar a janela consulta pode_fechar de cada aba")
+    checa_igual(janela.abas.count(), 1,
+                "e a aba NAO e' fechada quando a resposta e' 'cancelar'")
+    janela.abas.pode_fechar = real
 
     # ---------------------------------------------------------------------
-    secao("7b - fechar grava as preferencias")
+    secao("7b - fechar grava as preferencias e a sessao")
 
-    janela.documento.qt.setModified(False)
+    for aba in janela.abas.abas():
+        aba.documento.qt.setModified(False)
     janela.resize(900, 600)
     janela.close()
 
@@ -266,12 +281,50 @@ with appdata_temporario():
         quarta.documento.qt.setModified(True)
         resolveu = {"n": 0}
         quarta._resolver_alteracao_externa = (
-            lambda **_k: resolveu.update(n=resolveu["n"] + 1) or False)
+            lambda _doc, **_k: resolveu.update(n=resolveu["n"] + 1) or False)
         checa(not quarta.salvar(), "salvar e' recusado apos alteracao externa")
         checa_igual(resolveu["n"], 1,
                     "e o fluxo de alteracao externa (requisito 27) e' acionado")
 
         quarta.documento.qt.setModified(False)
+
+        # -----------------------------------------------------------------
+        secao("10 - varias abas e sessao (etapa 4)")
+
+        outro = tmp / "segundo.py"
+        outro.write_bytes(b"def f():\n  return 1\n")
+        checa(quarta.abrir_arquivo(str(outro)), "abre um segundo arquivo")
+        checa_igual(quarta.abas.count(), 2, "e agora sao duas abas")
+        checa_igual(quarta.documento.nome, "segundo.py",
+                    "a aba nova recebe o foco")
+        checa_igual(quarta.documento.indentacao.largura, 2,
+                    "e a indentacao detectada e' a DO ARQUIVO (2 espacos)")
+
+        # Reabrir o mesmo arquivo foca a aba existente em vez de duplicar.
+        checa(quarta.abrir_arquivo(str(alvo)), "reabrir o primeiro arquivo")
+        checa_igual(quarta.abas.count(), 2, "NAO cria uma terceira aba")
+        checa_igual(quarta.documento.nome, "abrir.txt",
+                    "e foca a aba que ja' tinha o arquivo")
+
+        # A barra de status acompanha a troca de aba.
+        quarta.abas.setCurrentIndex(1)
+        checa_igual(quarta.documento.nome, "segundo.py",
+                    "trocar de aba troca o documento atual")
+
+        instantaneo = quarta._capturar_sessao()
+        checa_igual(len(instantaneo.abas), 2,
+                    "a sessao captura as duas abas com arquivo")
+        caminhos = {a.caminho for a in instantaneo.abas}
+        checa(str(alvo) in caminhos and str(outro) in caminhos,
+              "e os dois caminhos estao la'")
+
+        # Uma aba SEM arquivo nao entra na sessao (ela vive na recuperacao).
+        quarta.nova_aba()
+        checa_igual(len(quarta._capturar_sessao().abas), 2,
+                    "aba 'Sem titulo' NAO entra na sessao")
+
+        for aba in quarta.abas.abas():
+            aba.documento.qt.setModified(False)
         quarta.close()
 
 sys.exit(resumir())
