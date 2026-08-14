@@ -169,6 +169,13 @@ _c("editar.selecionar_tudo", "Selecionar &tudo", EDITAR, "Ctrl+A",
    no_contexto=True)
 _c("editar.copiar_linha", "Copiar linha", EDITAR, "Ctrl+Shift+C",
    separador_antes=True, dica="Copia a linha inteira sem precisar selecionar")
+# Nao ha' atalho: o gesto E' o Alt+arrastar, e este item existe para o usuario
+# DESCOBRIR que ele existe. Um item de menu que so' explica um gesto e' melhor que
+# um recurso invisivel -- e melhor que inventar um atalho concorrente.
+_c("editar.selecao_em_bloco", "Selecao em &bloco (coluna)", EDITAR,
+   dica="Alt+arrastar marca um retangulo. Digitar altera todas as linhas na "
+        "mesma coluna, e Ctrl+C copia so' o retangulo. Alt+Shift+setas faz o "
+        "mesmo pelo teclado; Esc sai.")
 
 # -- linhas (requisito 22) --------------------------------------------------
 LINHAS = "Linhas"

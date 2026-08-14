@@ -65,6 +65,9 @@ class EditorDeTexto(QPlainTextEdit):
 
         self.selecoes = GerenciadorDeSelecoes(self)
         self.margem = MargemDeLinhas(self)
+        # Selecao retangular (Alt+arrastar). Ver `editor/bloco.py`.
+        from textforge.editor.bloco import SelecaoEmBloco
+        self.bloco = SelecaoEmBloco(self)
 
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.setFrameStyle(QPlainTextEdit.Shape.NoFrame)
@@ -296,6 +299,15 @@ class EditorDeTexto(QPlainTextEdit):
 
     def _largura_do_caractere(self) -> float:
         return QFontMetricsF(self.font()).horizontalAdvance(" ")
+
+    # A selecao em bloco precisa das duas medidas para converter um ponto do
+    # mouse em coluna. Publicas porque `editor/bloco.py` as consome.
+    def largura_de_caractere(self) -> float:
+        return self._largura_do_caractere()
+
+    def deslocamento_do_texto(self) -> float:
+        """x, em pixels, onde a coluna 0 comeca dentro do viewport."""
+        return self.contentOffset().x()
 
     def _pintar_fundo(self) -> None:
         pintor = QPainter(self.viewport())
@@ -714,7 +726,100 @@ class EditorDeTexto(QPlainTextEdit):
     # Teclado
     # ==================================================================
 
+    # ==================================================================
+    # Selecao em bloco (Alt+arrastar) -- ver editor/bloco.py
+    # ==================================================================
+
+    def mousePressEvent(self, evento) -> None:               # noqa: N802 - Qt
+        if (evento.button() == Qt.MouseButton.LeftButton
+                and evento.modifiers() & Qt.KeyboardModifier.AltModifier):
+            ponto = evento.position()
+            linha, coluna = self.bloco.da_posicao(int(ponto.x()), int(ponto.y()))
+            self.bloco.comecar(linha, coluna)
+            # O cursor de verdade vai junto: e' ele que o Qt usa para rolar a
+            # tela e para a barra de status mostrar Ln/Col.
+            self.setTextCursor(self.cursorForPosition(ponto.toPoint()))
+            evento.accept()
+            return
+        # Clique normal desfaz o bloco. Sem isto, digitar depois de clicar em
+        # outro lugar ainda editaria as linhas do retangulo antigo -- o usuario
+        # veria N linhas mudarem sem ter pedido.
+        self.bloco.limpar()
+        super().mousePressEvent(evento)
+
+    def mouseMoveEvent(self, evento) -> None:                # noqa: N802 - Qt
+        if self.bloco.arrastando:
+            ponto = evento.position()
+            linha, coluna = self.bloco.da_posicao(int(ponto.x()), int(ponto.y()))
+            self.bloco.estender(linha, coluna)
+            evento.accept()
+            return
+        super().mouseMoveEvent(evento)
+
+    def mouseReleaseEvent(self, evento) -> None:             # noqa: N802 - Qt
+        if self.bloco.arrastando:
+            self.bloco.terminar()
+            evento.accept()
+            return
+        super().mouseReleaseEvent(evento)
+
+    def _bloco_tratou_tecla(self, evento) -> bool:
+        """Teclas que agem sobre a selecao em bloco. False = trata normal."""
+        if not self.bloco.ativa:
+            return False
+        tecla = evento.key()
+        mods = evento.modifiers()
+        ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        alt = bool(mods & Qt.KeyboardModifier.AltModifier)
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        retangulo = self.bloco.retangulo
+
+        if tecla == Qt.Key.Key_Escape:
+            self.bloco.limpar()
+            return True
+        if ctrl and tecla in (Qt.Key.Key_C, Qt.Key.Key_X):
+            from PySide6.QtWidgets import QApplication
+            QApplication.clipboard().setText(self.bloco.texto())
+            if tecla == Qt.Key.Key_X and not self.isReadOnly():
+                self.bloco.substituir("")
+            return True
+
+        # Alt+Shift+setas estende o retangulo pelo teclado, que e' o gesto de quem
+        # nao quer soltar o teclado para pegar o mouse.
+        if alt and shift and tecla in (Qt.Key.Key_Left, Qt.Key.Key_Right,
+                                       Qt.Key.Key_Up, Qt.Key.Key_Down):
+            dl = -1 if tecla == Qt.Key.Key_Up else (
+                1 if tecla == Qt.Key.Key_Down else 0)
+            dc = -1 if tecla == Qt.Key.Key_Left else (
+                1 if tecla == Qt.Key.Key_Right else 0)
+            self.bloco.definir(
+                retangulo.linha_ancora, retangulo.coluna_ancora,
+                max(0, min(retangulo.linha_cursor + dl,
+                           self.document().blockCount() - 1)),
+                max(0, retangulo.coluna_cursor + dc))
+            return True
+
+        if self.isReadOnly():
+            return False
+        if tecla in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
+            self.bloco.apagar()
+            return True
+        # Texto digitavel: entra em TODAS as linhas do retangulo.
+        texto = evento.text()
+        if texto and texto.isprintable() and not ctrl:
+            self.bloco.substituir(texto)
+            return True
+        # Qualquer outra tecla (setas sozinhas, Enter, Tab) sai do modo bloco e
+        # segue o caminho normal. Tentar dar semantica retangular a tudo produz
+        # comportamento que ninguem consegue prever.
+        self.bloco.limpar()
+        return False
+
     def keyPressEvent(self, evento) -> None:                 # noqa: N802 - Qt
+        if self._bloco_tratou_tecla(evento):
+            evento.accept()
+            return
+
         tecla = evento.key()
         modificadores = evento.modifiers()
         sem_modificador = modificadores == Qt.KeyboardModifier.NoModifier

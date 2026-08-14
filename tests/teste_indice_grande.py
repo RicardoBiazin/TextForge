@@ -414,6 +414,37 @@ def testar_visor(caminho: pathlib.Path) -> None:
     checa_igual(visor.selecao(), (0, fonte.total_de_linhas() - 1),
                 "Ctrl+A seleciona o arquivo inteiro")
 
+    secao("Selecao em BLOCO (Alt+arrastar): so' as colunas")
+
+    # As linhas do arquivo de teste sao "linha 000000000042 xxxx...", entao as
+    # colunas 6..18 sao exatamente o numero.
+    visor.definir_bloco(10, 6, 14, 18)
+    checa(visor.em_bloco, "definir_bloco liga o modo bloco")
+    checa_igual(visor.selecao_de_colunas(), (6, 18), "com as colunas certas")
+    checa_igual(visor.selecao(), (10, 14), "e as linhas certas")
+    copiado = visor.texto_selecionado()
+    checa_igual(copiado.split("\n"),
+                [f"{n:012d}" for n in range(10, 15)],
+                "*** o copiado e' SO' a coluna, nas 5 linhas ***")
+
+    visor.definir_bloco(0, 0, 0, 5)
+    checa_igual(visor.texto_selecionado(), "linha",
+                "um bloco de uma linha so' tambem funciona")
+
+    # Bloco alem do fim da linha: a linha contribui com vazio, e a contagem de
+    # linhas se mantem -- igual ao editor.
+    visor.definir_bloco(0, 500, 2, 520)
+    checa_igual(visor.texto_selecionado(), "\n\n",
+                "colunas alem do fim da linha dao vazio, sem sumir com as linhas")
+
+    visor.selecionar_tudo()
+    checa(not visor.em_bloco, "Ctrl+A volta para a selecao por linha")
+    visor.ir_para_linha(5)
+    visor.ir_para_linha(7, estender=True)
+    checa(not visor.em_bloco, "e a selecao por linha continua existindo")
+    checa_igual(len(visor.texto_selecionado().split("\n")), 3,
+                "com as tres linhas INTEIRAS")
+
     secao("A pintura nao estoura")
     # Pintar de verdade num QPixmap: e' o teste que pega IndexError e divisao por
     # zero no paintEvent, que em modo offscreen passariam despercebidos.
@@ -428,6 +459,9 @@ def testar_visor(caminho: pathlib.Path) -> None:
     visor.ir_para_linha(fonte.total_de_linhas() - 1)
     visor.viewport().render(pixmap)
     checa(True, "pintar no FIM do arquivo (linha vazia) nao estoura")
+    visor.definir_bloco(100, 4, 130, 20)
+    visor.viewport().render(pixmap)
+    checa(True, "pintar com selecao em BLOCO nao estoura")
 
     secao("Expansao de TAB")
     checa_igual(_expandir_tabs("abc", 4), ("abc", None),

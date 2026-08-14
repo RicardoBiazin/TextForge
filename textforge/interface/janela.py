@@ -244,6 +244,7 @@ class JanelaPrincipal(QMainWindow):
 
             # -- extras (requisitos 24 e 25) ----------------------------------
             "editar.comentar": self.alternar_comentario,
+            "editar.selecao_em_bloco": self.explicar_selecao_em_bloco,
             "ferramentas.paleta": self.abrir_paleta,
             "ferramentas.abertura_rapida": self.abertura_rapida,
             "ferramentas.configuracoes": self.abrir_configuracoes,
@@ -1986,6 +1987,28 @@ class JanelaPrincipal(QMainWindow):
                                  bloco_final.position()
                                  + bloco_final.length() - 1))
         editor.setTextCursor(novo)
+
+    def explicar_selecao_em_bloco(self) -> None:
+        """O item de menu que torna o gesto DESCOBRIVEL.
+
+        Selecao em bloco nao e' um comando que se executa -- e' um gesto. Um item
+        de menu que so' explica o gesto e' mais util que o recurso ficar invisivel,
+        e melhor que inventar um atalho que competiria com o proprio Alt+arrastar.
+        """
+        onde = ("no visor de arquivo grande" if self.visor_grande() is not None
+                else "no editor")
+        dialogos.avisar(
+            self, f"Selecao em bloco (por coluna) — {onde}",
+            "Alt + arrastar com o mouse marca um RETANGULO em vez de linhas "
+            "inteiras.\n\n"
+            "  Alt+Shift+setas   monta o retangulo pelo teclado\n"
+            "  Ctrl+C            copia so' as colunas do retangulo\n"
+            "  Esc               sai do modo bloco\n\n"
+            "No editor, digitar com o retangulo ativo altera TODAS as linhas na "
+            "mesma coluna de uma vez, e um Ctrl+Z desfaz tudo junto. Uma linha "
+            "curta demais e' completada com espacos ate' a coluna.\n\n"
+            "No visor de arquivo grande a selecao e' somente leitura: serve para "
+            "copiar uma coluna de um log de largura fixa.")
 
     # ==================================================================
     # Paleta de comandos e abertura rapida (requisito 23)

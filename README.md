@@ -83,6 +83,14 @@ salvar por cima de um arquivo que não foi lido direito destrói dados. Converte
 avisa **antes**, listando os caracteres que seriam perdidos, com o nome Unicode de
 cada um.
 
+**Seleção em bloco (por coluna).** `Alt+arrastar` marca um **retângulo** em vez de
+linhas inteiras. No editor, digitar altera todas as linhas na mesma coluna de uma
+vez — e um `Ctrl+Z` desfaz tudo junto; uma linha curta demais é completada com
+espaços até a coluna. No visor de arquivo grande é somente leitura, para copiar uma
+coluna de um log de largura fixa. `Alt+Shift+setas` faz o mesmo pelo teclado, `Esc`
+sai. As colunas são **visuais**: um TAB não vale uma coluna, então o retângulo sai
+alinhado mesmo num arquivo indentado com TAB.
+
 **Realce** para 23 linguagens, com contextos multi-linha de verdade: PHP dentro de
 HTML, `<script>` e `<style>`, heredoc de PHP, comentário de bloco atravessando
 linhas.

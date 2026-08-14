@@ -40,6 +40,8 @@ Cada uma já causou um defeito real. Estão anotadas também no ponto exato do c
 | `vigia.py` | O tail **nunca** usa mmap (o arquivo cresce debaixo do mapeamento) e **sempre** um `IncrementalDecoder` (senão meio caractere multibyte vira U+FFFD permanente). |
 | `grande/indice.py` | Fechar o mmap com o worker lendo dele estoura. `parar()` **adia** o fechamento em vez de bloquear a interface. |
 | `arquivos.py` | `ReplaceFileW` via ctypes, e não `os.replace`: o segundo perde as ACEs explícitas e os fluxos alternativos do original. |
+| `interface/menus.py` | **Nunca** `QAction.menu()`. No PySide6 o QMenu devolvido tem o tempo de vida atrelado ao wrapper Python do QAction: quando ele é coletado, o shiboken **destrói o QMenu em C++** e a barra fica com ponteiro pendurado. Use `vinculos.menu(grupo)`. Há varredura estática em `teste_janela.py`. |
+| `editor/bloco.py` | As colunas do retângulo são **visuais**, não índices de caractere — senão o retângulo sai torto em arquivo com TAB, que é justamente onde a seleção por coluna serve. E editar percorre as linhas **de baixo para cima**: de cima para baixo, mudar o comprimento de uma linha desloca as posições já calculadas das de baixo. |
 | `TextForge.spec` | `PySide6.QtNetwork` **não** entra nos excludes. Parece dispensável e é onde vivem `QLocalServer`/`QLocalSocket` — instância única e "Abrir com". |
 | `TextForge.spec` | `uac_admin=False`. Elevado, o arrastar-e-soltar do Explorer **para de funcionar**. |
 | `associar.ps1` | UTF-8 **com BOM**. O PowerShell 5.1 lê sem BOM como ANSI e destrói os acentos. |

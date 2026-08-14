@@ -506,4 +506,101 @@ vazio = novo_editor("", mostrar_fim_de_linha=True,
 vazio.grab()
 checa(True, "desenhar um documento VAZIO com tudo ligado nao estoura")
 
+# ---------------------------------------------------------------------------
+secao("18 - selecao em BLOCO (Alt+arrastar)")
+
+LARGURA_FIXA = ("codigo  001  ativo\n"
+                "codigo  002  ativo\n"
+                "codigo  003  ativo\n")
+
+e = novo_editor(LARGURA_FIXA)
+e.bloco.definir(0, 8, 2, 11)
+checa(e.bloco.ativa, "definir() liga a selecao em bloco")
+checa_igual(e.bloco.retangulo.linhas, 3, "tres linhas")
+checa_igual(e.bloco.retangulo.largura, 3, "e tres colunas de largura")
+checa_igual(e.bloco.texto(), "001\n002\n003",
+            "*** o texto do bloco e' so' a coluna, e nao as linhas inteiras ***")
+checa_igual(e.selecoes.quantas("bloco"), 3,
+            "o retangulo e' pintado com uma ExtraSelection por linha")
+
+secao("18b - digitar altera todas as linhas de uma vez")
+
+e.bloco.substituir("XXX")
+checa_igual(e.toPlainText(),
+            "codigo  XXX  ativo\ncodigo  XXX  ativo\ncodigo  XXX  ativo\n",
+            "digitar sobre o bloco troca a coluna nas TRES linhas")
+e.undo()
+checa_igual(e.toPlainText(), LARGURA_FIXA,
+            "*** e UM Ctrl+Z desfaz as tres (nao uma por linha) ***")
+
+e2 = novo_editor(LARGURA_FIXA)
+e2.bloco.definir(0, 8, 2, 8)          # largura ZERO: um cursor por linha
+checa(e2.bloco.retangulo.vazio, "largura zero e' um cursor por linha")
+e2.bloco.substituir("# ")
+checa_igual(e2.toPlainText(),
+            "codigo  # 001  ativo\ncodigo  # 002  ativo\ncodigo  # 003  ativo\n",
+            "com largura zero, o texto e' INSERIDO nas tres linhas")
+
+secao("18c - apagar")
+
+e3 = novo_editor(LARGURA_FIXA)
+e3.bloco.definir(0, 8, 2, 11)
+e3.bloco.apagar()
+checa_igual(e3.toPlainText(),
+            "codigo    ativo\ncodigo    ativo\ncodigo    ativo\n",
+            "apagar tira a coluna das tres linhas")
+
+secao("18d - linha mais curta que o retangulo")
+
+DESIGUAL = "linha bem longa aqui\ncurta\noutra linha longa ok\n"
+e4 = novo_editor(DESIGUAL)
+e4.bloco.definir(0, 10, 2, 15)
+checa_igual(e4.bloco.texto(), "longa\n\na lon",
+            "*** a linha curta contribui com VAZIO, e nao e' pulada "
+            "(a contagem de linhas se mantem) ***")
+e4.bloco.substituir("#")
+linhas = e4.toPlainText().split("\n")
+checa_igual(linhas[1], "curta     #",
+            "*** e ao escrever, a linha curta e' completada com espacos ate' a "
+            "coluna (senao o texto sairia fora de coluna) ***")
+
+secao("18e - colunas VISUAIS: um TAB nao vale uma coluna")
+
+COM_TAB = "\tum\n    dois\n"
+e5 = novo_editor(COM_TAB, usar_espacos=True, tabulacao=4)
+checa_igual(e5.bloco.coluna_visual("\tum", 1), 4,
+            "depois de um TAB de largura 4, a coluna visual e' 4")
+checa_igual(e5.bloco.coluna_visual("    dois", 4), 4,
+            "e quatro espacos dao a mesma coluna 4")
+checa_igual(e5.bloco.posicao_da_coluna("\tum", 4), 1,
+            "a coluna 4 da linha com TAB cai no caractere 1")
+checa_igual(e5.bloco.posicao_da_coluna("\tum", 2), 1,
+            "coluna DENTRO do TAB pula o TAB inteiro: ele comeca ANTES dela, "
+            "entao pertence ao lado esquerdo")
+checa_igual(e5.bloco.posicao_da_coluna("\tum", 0), 0,
+            "e a coluna 0 pega o TAB, porque ele comeca la'")
+e5.bloco.definir(0, 4, 1, 6)
+checa_igual(e5.bloco.texto(), "um\ndo",
+            "*** o retangulo sai alinhado nas duas linhas, apesar do TAB ***")
+checa_igual(e5.bloco.posicao_da_coluna("ab", 99), 2,
+            "coluna alem do fim devolve o comprimento da linha")
+
+secao("18f - o bloco some quando deve")
+
+e6 = novo_editor(LARGURA_FIXA)
+e6.bloco.definir(0, 0, 2, 3)
+teclar(e6, Qt.Key.Key_Escape)
+checa(not e6.bloco.ativa, "Esc limpa a selecao em bloco")
+checa_igual(e6.selecoes.quantas("bloco"), 0, "e a camada de desenho tambem")
+
+e6.bloco.definir(0, 0, 2, 3)
+teclar(e6, Qt.Key.Key_Down)
+checa(not e6.bloco.ativa,
+      "uma seta sozinha sai do modo bloco (em vez de inventar semantica)")
+
+e7 = novo_editor(LARGURA_FIXA)
+e7.bloco.definir(0, 8, 2, 11)
+e7.grab()
+checa(True, "desenhar com selecao em bloco ativa nao estoura")
+
 sys.exit(resumir())

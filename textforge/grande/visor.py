@@ -18,10 +18,11 @@ TRES DECISOES QUE VALEM SER LIDAS ANTES DE MEXER:
    cresce conforme o usuario rola, o que e' honesto: o programa nao sabe o que nao
    leu.
 
-2. **A selecao e' por LINHA, e nao por caractere.** Selecao de caractere exigiria
-   mapeamento de coordenada para offset em texto que nao esta' na memoria, com
-   ancora sobrevivendo a' rolagem. O gesto real num log e' "pegar estas linhas e
-   colar num chamado", e isso a selecao por linha atende inteiro.
+2. **Sao DUAS selecoes: por LINHA (arrastar) e em BLOCO (Alt+arrastar).** A de
+   linha atende o gesto mais comum -- "pegar estas linhas e colar num chamado". A
+   em bloco atende o outro: um log de largura fixa em que se quer SO' a coluna do
+   horario, ou so' a do codigo de erro. As duas sao somente leitura, e a coluna e'
+   aritmetica pura porque a fonte e' monoespacada.
 
 3. **A linha desenhada e' CORTADA.** Um arquivo binario aberto por engano pode ter
    200 mil caracteres numa linha; desenhar isso trava a pintura sem mostrar mais
@@ -99,6 +100,11 @@ class VisorDeArquivoGrande(QAbstractScrollArea):
         self._ancora = 0                 # inicio da selecao por linha
         self._maior_largura_vista = 0    # em pixels; ver a decisao 1
         self._padrao: re.Pattern[str] | None = None
+        # Selecao em BLOCO: colunas da ancora e do cursor, ou None quando a
+        # selecao e' por linha. Guardar as colunas separadas -- em vez de um modo
+        # global -- e' o que permite ter as duas selecoes sem uma apagar a outra.
+        self._coluna_ancora: int | None = None
+        self._coluna_cursor: int = 0
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
@@ -212,14 +218,51 @@ class VisorDeArquivoGrande(QAbstractScrollArea):
         return (min(self._ancora, self._linha_atual),
                 max(self._ancora, self._linha_atual))
 
+    @property
+    def em_bloco(self) -> bool:
+        return self._coluna_ancora is not None
+
+    def selecao_de_colunas(self) -> tuple[int, int]:
+        """(primeira, ultima) coluna do bloco. (0, 0) quando nao ha' bloco."""
+        if self._coluna_ancora is None:
+            return (0, 0)
+        return (min(self._coluna_ancora, self._coluna_cursor),
+                max(self._coluna_ancora, self._coluna_cursor))
+
     def texto_selecionado(self) -> str:
+        """As linhas inteiras, ou so' as colunas do bloco.
+
+        A contagem de linhas e' a mesma nos dois casos: uma linha curta demais
+        contribui com string vazia, e nao e' pulada. Pular linhas curtas faria o
+        trecho colado sair com menos linhas que o original, e o alinhamento com o
+        resto do log se perderia.
+        """
         inicio, fim = self.selecao()
-        return "\n".join(self.fonte.faixa(inicio, fim + 1))
+        linhas = self.fonte.faixa(inicio, fim + 1)
+        if self._coluna_ancora is None:
+            return "\n".join(linhas)
+        c0, c1 = self.selecao_de_colunas()
+        return "\n".join(linha[c0:c1] for linha in linhas)
 
     def selecionar_tudo(self) -> None:
         self._ancora = 0
         self._linha_atual = max(0, self.fonte.total_de_linhas() - 1)
+        self._coluna_ancora = None
         self.viewport().update()
+
+    def definir_bloco(self, linha_ancora: int, coluna_ancora: int,
+                      linha_cursor: int, coluna_cursor: int) -> None:
+        """Define a selecao em bloco direto. Usado pelo teclado e pelos testes."""
+        self._ancora = max(0, linha_ancora)
+        self._linha_atual = max(0, linha_cursor)
+        self._coluna_ancora = max(0, coluna_ancora)
+        self._coluna_cursor = max(0, coluna_cursor)
+        self.viewport().update()
+
+    def _coluna_do_ponto(self, x: int) -> int:
+        """Coluna sob o ponteiro. Aritmetica pura: a fonte e' monoespacada."""
+        util = x - self._largura_da_margem() + self.horizontalScrollBar().value()
+        return max(0, int(util // self._largura_do_digito))
 
     def copiar(self) -> bool:
         """Copia as linhas selecionadas. False se o usuario recusou o tamanho.
@@ -234,6 +277,12 @@ class VisorDeArquivoGrande(QAbstractScrollArea):
         # descobrir que e' grande demais ja' seria o dano que se quer evitar.
         total = max(1, self.fonte.total_de_linhas())
         estimado = self.fonte.tamanho_em_bytes() * (fim - inicio + 1) // total
+        if self._coluna_ancora is not None:
+            # No bloco, so' as colunas escolhidas saem. Estimar pela linha inteira
+            # pediria confirmacao para uma copia que e' uma fracao do tamanho.
+            c0, c1 = self.selecao_de_colunas()
+            media = max(1, self.fonte.tamanho_em_bytes() // total)
+            estimado = estimado * min(c1 - c0, media) // media
         if estimado > limite:
             from textforge.interface import dialogos
             if not dialogos.confirmar(
@@ -263,7 +312,30 @@ class VisorDeArquivoGrande(QAbstractScrollArea):
         pagina = self._linhas_visiveis()
         ultimo = max(0, self.fonte.total_de_linhas() - 1)
 
-        if ctrl and tecla == Qt.Key.Key_C:
+        alt = bool(mods & Qt.KeyboardModifier.AltModifier)
+
+        # Alt+Shift+setas monta o bloco pelo teclado. Comeca na linha atual, na
+        # coluna 0, se ainda nao houver bloco.
+        if alt and estender and tecla in (Qt.Key.Key_Left, Qt.Key.Key_Right,
+                                          Qt.Key.Key_Up, Qt.Key.Key_Down):
+            if self._coluna_ancora is None:
+                self._coluna_ancora = self._coluna_cursor = 0
+                self._ancora = self._linha_atual
+            dl = -1 if tecla == Qt.Key.Key_Up else (
+                1 if tecla == Qt.Key.Key_Down else 0)
+            dc = -1 if tecla == Qt.Key.Key_Left else (
+                1 if tecla == Qt.Key.Key_Right else 0)
+            self.definir_bloco(self._ancora, self._coluna_ancora,
+                               min(self._linha_atual + dl, ultimo),
+                               self._coluna_cursor + dc)
+            self.garantir_visivel(self._linha_atual)
+            evento.accept()
+            return
+
+        if tecla == Qt.Key.Key_Escape and self._coluna_ancora is not None:
+            self._coluna_ancora = None
+            self.viewport().update()
+        elif ctrl and tecla == Qt.Key.Key_C:
             self.copiar()
         elif ctrl and tecla == Qt.Key.Key_A:
             self.selecionar_tudo()
@@ -291,17 +363,35 @@ class VisorDeArquivoGrande(QAbstractScrollArea):
         if evento.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(evento)
             return
+        ponto = evento.position()
         alvo = (self.verticalScrollBar().value()
-                + int(evento.position().y()) // self._altura_da_linha)
-        self.ir_para_linha(
-            alvo,
-            estender=bool(evento.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+                + int(ponto.y()) // self._altura_da_linha)
+        if evento.modifiers() & Qt.KeyboardModifier.AltModifier:
+            coluna = self._coluna_do_ponto(int(ponto.x()))
+            self.definir_bloco(alvo, coluna, alvo, coluna)
+        else:
+            # Arrastar sem Alt volta para a selecao por linha -- senao, uma vez
+            # feito um bloco, o gesto normal nunca mais funcionaria.
+            self._coluna_ancora = None
+            self.ir_para_linha(
+                alvo, estender=bool(evento.modifiers()
+                                    & Qt.KeyboardModifier.ShiftModifier))
         self.setFocus()
 
     def mouseMoveEvent(self, evento) -> None:                 # noqa: N802 - Qt
-        if evento.buttons() & Qt.MouseButton.LeftButton:
-            alvo = (self.verticalScrollBar().value()
-                    + int(evento.position().y()) // self._altura_da_linha)
+        if not (evento.buttons() & Qt.MouseButton.LeftButton):
+            return
+        ponto = evento.position()
+        alvo = (self.verticalScrollBar().value()
+                + int(ponto.y()) // self._altura_da_linha)
+        if self._coluna_ancora is not None:
+            self._linha_atual = max(0, min(alvo,
+                                           self.fonte.total_de_linhas() - 1))
+            self._coluna_cursor = self._coluna_do_ponto(int(ponto.x()))
+            self.garantir_visivel(self._linha_atual)
+            self.viewport().update()
+            self.linha_atual_mudou.emit(self._linha_atual)
+        else:
             self.ir_para_linha(alvo, estender=True)
 
     # ==================================================================
@@ -339,8 +429,19 @@ class VisorDeArquivoGrande(QAbstractScrollArea):
                          self.viewport().width() - largura_margem, altura)
 
             if sel_inicio <= numero <= sel_fim:
-                cor = ("editor.selecao" if tem_selecao else "editor.linha_atual")
-                pintor.fillRect(area, tema.cor(cor))
+                if self._coluna_ancora is not None:
+                    # Bloco: pinta so' as colunas, e nao a linha inteira.
+                    c0, c1 = self.selecao_de_colunas()
+                    largura_col = max(1, c1 - c0) * self._largura_do_digito
+                    pintor.fillRect(
+                        QRect(largura_margem - deslocamento
+                              + c0 * self._largura_do_digito,
+                              topo, largura_col, altura),
+                        tema.cor("editor.selecao"))
+                else:
+                    cor = ("editor.selecao" if tem_selecao
+                           else "editor.linha_atual")
+                    pintor.fillRect(area, tema.cor(cor))
 
             # -- numero da linha ---------------------------------------------
             eh_atual = numero == self._linha_atual
@@ -361,8 +462,12 @@ class VisorDeArquivoGrande(QAbstractScrollArea):
             if self._padrao is not None:
                 self._pintar_ocorrencias(pintor, recorte, mapa, x, topo, altura)
 
-            pintor.setPen(tema.cor("editor.texto_da_selecao" if tem_selecao
-                                   and sel_inicio <= numero <= sel_fim
+            # No modo bloco o texto NAO troca de cor: so' uma parte da linha esta'
+            # selecionada, e pintar a linha toda com a cor da selecao daria a
+            # impressao errada de que ela inteira foi pega.
+            pintor.setPen(tema.cor("editor.texto_da_selecao"
+                                   if (tem_selecao and self._coluna_ancora is None
+                                       and sel_inicio <= numero <= sel_fim)
                                    else "editor.texto"))
             pintor.drawText(x, topo + metricas.ascent(), exibido)
 
