@@ -236,6 +236,8 @@ class JanelaPrincipal(QMainWindow):
 
             # -- visualizadores (requisito 6, item CSV) -----------------------
             "ferramentas.tabela_csv": self.alternar_modo_tabela,
+            # -- acompanhar log (requisito 26) --------------------------------
+            "ferramentas.acompanhar": self.alternar_acompanhamento,
 
             # -- busca (requisito 8) -----------------------------------------
             "buscar.localizar": lambda: self.abrir_busca(),
@@ -503,6 +505,14 @@ class JanelaPrincipal(QMainWindow):
 
     def _ao_trocar_de_aba(self, aba: Aba | None) -> None:
         if aba is None:
+            return
+        # A marca de "Acompanhar" e' POR ABA, e nao uma preferencia global: com
+        # duas abas abertas, uma acompanhando e outra nao, o menu tem de refletir a
+        # que esta' na frente.
+        self._marcar_acompanhamento(aba.tem_view("tail"))
+        if aba.view_atual() == "tail":
+            self._mostrar_metadados()
+            aba.view("tail").setFocus()
             return
         if aba.view_atual() == "grande":
             visor = aba.visor_grande.visor
@@ -949,6 +959,90 @@ class JanelaPrincipal(QMainWindow):
         tarefa.sinais.terminou.connect(self.barra.esconder_progresso)
         self._tarefa_de_busca = tarefa
         tarefas.rodar(tarefa, disco=True)
+
+    # ==================================================================
+    # Acompanhar log ao vivo (requisito 26)
+    # ==================================================================
+
+    def alternar_acompanhamento(self) -> None:
+        aba = self.abas.aba_atual()
+        if aba is None:
+            return
+        if aba.tem_view("tail"):
+            self.parar_acompanhamento()
+        else:
+            self.iniciar_acompanhamento()
+
+    def iniciar_acompanhamento(self) -> bool:
+        from textforge.visualizadores.registro_ao_vivo import VisualizadorAoVivo
+
+        aba = self.abas.aba_atual()
+        if aba is None:
+            return False
+        doc = aba.documento
+        if doc.caminho is None:
+            dialogos.avisar(
+                self, "Este documento ainda nao foi salvo.",
+                "Acompanhar alteracoes precisa de um arquivo no disco. Salve o "
+                "arquivo primeiro, ou abra o .log que voce quer acompanhar.")
+            self._marcar_acompanhamento(False)
+            return False
+        if doc.modificado:
+            # Acompanhar um arquivo com edicoes pendentes e' pedir para perde-las:
+            # a view ao vivo mostra o DISCO, e o que esta' na memoria nao esta' la'.
+            if not dialogos.confirmar(
+                    self, "Acompanhar alteracoes",
+                    f"<b>{doc.nome}</b> tem alteracoes nao salvas.<br><br>"
+                    "O acompanhamento mostra o que esta' no DISCO, e nao o que "
+                    "voce editou. Suas alteracoes continuam na aba de texto. "
+                    "Continuar?"):
+                self._marcar_acompanhamento(False)
+                return False
+
+        vista = VisualizadorAoVivo(doc.caminho, doc.codec, self.cfg, self.tema, aba)
+        aba.registrar_view("tail", vista)
+        aba.trocar_para("tail")
+        vista.iniciar()
+        # Enquanto o tail roda, o vigia de alteracao externa fica CALADO para este
+        # arquivo: um log ativo muda a cada segundo, e o dialogo "alterado no
+        # disco" apareceria sem parar sobre a view que existe justamente para
+        # mostrar essa mudanca.
+        self.vigia.pausar(doc.caminho)
+        self._marcar_acompanhamento(True)
+        self.barra.showMessage(f"Acompanhando {doc.nome}", 4000)
+        self._mostrar_metadados()
+        return True
+
+    def parar_acompanhamento(self) -> None:
+        aba = self.abas.aba_atual()
+        if aba is None or not aba.tem_view("tail"):
+            return
+        doc = aba.documento
+        # De volta a' view de origem: um arquivo grande volta para o visor, um
+        # arquivo normal volta para o editor.
+        aba.trocar_para("grande" if aba.tem_view("grande") else "texto")
+        aba.remover_view("tail")
+        if doc.caminho is not None:
+            # O vigia volta a avisar -- mas com a assinatura ATUAL, senao o
+            # primeiro aviso seria sobre as linhas que o proprio tail ja' mostrou.
+            self.vigia.confirmar(doc.caminho,
+                                 arquivos.Assinatura.de_caminho(doc.caminho))
+            self.vigia.retomar(doc.caminho)
+        self._marcar_acompanhamento(False)
+        self.barra.showMessage("Acompanhamento encerrado", 3000)
+        self._mostrar_metadados()
+
+    def _marcar_acompanhamento(self, ligado: bool) -> None:
+        """Mantem a marca do item de menu em sincronia com o estado real.
+
+        O item e' `alternavel` sem chave de configuracao: o estado NAO e' uma
+        preferencia salva, e' o que esta' acontecendo nesta aba. Sem isto, cancelar
+        o dialogo de confirmacao deixaria o menu marcado para um acompanhamento que
+        nunca comecou.
+        """
+        qacao = self.vinculos.qacao("ferramentas.acompanhar")
+        if qacao is not None:
+            qacao.setChecked(ligado)
 
     # ==================================================================
     # Modo tabela do CSV (requisito 6, item CSV)

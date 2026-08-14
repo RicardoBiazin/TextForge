@@ -155,6 +155,19 @@ def padrao() -> dict[str, Any]:
         # transferencia: copiar 500 MB pode derrubar a sessao do Windows.
         "limite_copia_mb": 64,
 
+        # -- acompanhar log / tail (requisito 26) ---------------------------
+        # De quanto em quanto tempo o acompanhador consulta o arquivo. 500 ms e'
+        # imperceptivel para quem le' e barato ate' em unidade de rede.
+        "tail_intervalo_ms": 500,
+        # Teto de linhas mantidas na view ao vivo. `setMaximumBlockCount` descarta
+        # as mais antigas em O(1), e e' o que impede um log que cresce por horas de
+        # consumir memoria sem limite.
+        "tail_linhas_maximas": 5000,
+        # Quantas linhas JA existentes no fim do arquivo aparecem ao ligar o
+        # acompanhamento. Comecar com a tela vazia esperando a proxima linha e'
+        # desnorteante; e' o `-n 20` do `tail`.
+        "tail_linhas_de_contexto": 200,
+
         # -- janela (preenchido ao fechar) ----------------------------------
         "geometria": "",
         "estado_da_janela": "",

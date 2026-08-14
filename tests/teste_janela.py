@@ -67,11 +67,15 @@ with appdata_temporario():
     checa(janela.vinculos.tem_tratador("ferramentas.tabela_csv"),
           "'Modo tabela (CSV)' esta' ligado a partir da etapa 9")
 
-    # Um comando de etapa futura tem de aparecer DESABILITADO, e nao escondido:
-    # o usuario ve o que o programa vai ter, e nada clicavel finge funcionar.
-    checa(not janela.vinculos.tem_tratador("ferramentas.acompanhar"),
-          "'Acompanhar alteracoes (tail)' ainda NAO esta' ligado (etapa 11)")
-    qa = janela.vinculos.qacao("ferramentas.acompanhar")
+    checa(janela.vinculos.tem_tratador("ferramentas.acompanhar"),
+          "'Acompanhar alteracoes (tail)' esta' ligado a partir da etapa 11")
+
+    # Um comando ainda nao implementado tem de aparecer DESABILITADO, e nao
+    # escondido: o usuario ve o que o programa vai ter, e nada clicavel finge
+    # funcionar. `Comparar arquivos` esta' declarado como encaixe da v2.
+    checa(not janela.vinculos.tem_tratador("ferramentas.comparar"),
+          "'Comparar arquivos' ainda NAO esta' ligado (fica para a v2)")
+    qa = janela.vinculos.qacao("ferramentas.comparar")
     checa(qa is not None and not qa.isEnabled(),
           "e por isso aparece desabilitado, em vez de fingir funcionar")
 

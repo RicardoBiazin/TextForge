@@ -119,6 +119,7 @@ class Aba(QWidget):
         estivesse aberto, o que seria um efeito colateral inaceitavel de apenas
         abrir um arquivo para ler.
         """
+        self.remover_view("tail")          # para a thread do acompanhamento
         if self.indexador is not None:
             self.indexador.parar(fechar=True)
             self.indexador = None
@@ -153,6 +154,11 @@ class Aba(QWidget):
         widget = self._views.pop(nome, None)
         if widget is None:
             return
+        # A view ao vivo tem uma THREAD por tras. Descartar o widget sem parar a
+        # thread deixaria um QThread rodando sobre um objeto destruido -- que e' a
+        # forma classica de o programa morrer sem traceback.
+        if hasattr(widget, "encerrar"):
+            widget.encerrar()
         self.pilha.removeWidget(widget)
         widget.setParent(None)
         widget.deleteLater()

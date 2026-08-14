@@ -72,6 +72,9 @@ SUITES = [
 
     # etapa 10 -- arquivo grande
     ("teste_indice_grande.py", "indice esparso, visor, fronteira de bloco"),
+
+    # etapa 11 -- acompanhar log
+    ("teste_tail.py", "leitura incremental, multibyte cortado, rotacao"),
 ]
 
 

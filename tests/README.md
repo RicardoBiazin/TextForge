@@ -51,6 +51,21 @@ quebrar, leia o comentário no código antes de "consertar" o teste.
   arquivo de integração isso é destruição silenciosa e torna qualquer `fc /b`
   inútil. Se este teste quebrar, o `ModeloCsv` voltou a reconstruir linhas que
   ninguém editou — o `registros_crus`/`sujas` existe exatamente para impedir isso.
+- **`teste_tail.py`, "caractere UTF-8 multibyte cortado na fronteira".** Um `ç` em
+  UTF-8 são dois bytes. Se o processo gravou o primeiro e ainda não o segundo,
+  `bytes.decode` produziria um **U+FFFD permanente** no lugar de um caractere que
+  chega inteiro no milissegundo seguinte — e o log mostraria lixo. O
+  `codecs.getincrementaldecoder` segura os bytes incompletos; é o motivo de ele
+  existir. Se este teste quebrar, alguém trocou o decodificador vivo por um
+  `decode` avulso.
+- **`teste_tail.py`, "pausado, nenhuma leitura NOVA acontece".** A garantia é
+  precisa e vale ler antes de "consertar": `pausar()` só volta quando o worker está
+  fora da leitura (há um lock), mas um lote lido no instante anterior ao clique
+  **ainda chega**, porque descartá-lo perderia linhas para sempre — o offset já
+  avançou e não há como des-ler. O teste drena a fila antes de medir. Numa versão
+  anterior, `pausar()` só baixava uma bandeira e o worker seguia lendo por uma volta
+  inteira; a suíte passava por sorte de temporização e a fumaça com um processo
+  gravando de verdade pegou o vazamento.
 - **`teste_csv.py`, "Registro não é linha".** Um campo entre aspas pode conter
   `\n`. Dividir o CSV por linha parte o registro ao meio e desloca a tabela
   inteira dali para a frente. `dividir_registros` varre respeitando as aspas, e a
