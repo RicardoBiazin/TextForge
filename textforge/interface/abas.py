@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (QApplication, QMenu, QStackedWidget, QTabBar,
                                QTabWidget, QToolButton, QVBoxLayout, QWidget)
 
 from textforge import arquivos, log_interno
-from textforge.documento import Documento
+from textforge.documento import MODO_GRANDE, Documento
 from textforge.editor.widget import EditorDeTexto
 from textforge.realce.pintor import Pintor
 
@@ -33,6 +33,14 @@ log = log_interno.obter(__name__)
 
 class Aba(QWidget):
     """As views de um documento."""
+
+    #: (linha, coluna) em base zero, vindo de uma view que NAO e' o editor. O
+    #: gerenciador repassa para a barra de status pelo mesmo caminho do editor.
+    posicao_no_visor = Signal(int, int)
+    #: (bytes varridos, bytes totais) da indexacao de arquivo grande.
+    indexacao_andou = Signal(int, int)
+    #: total de linhas, quando o indice ficou completo.
+    indexacao_terminou = Signal(int)
 
     def __init__(self, documento: Documento, cfg: dict, tema,
                  parent: QWidget | None = None) -> None:
@@ -67,6 +75,56 @@ class Aba(QWidget):
         self.pintor = Pintor(documento.qt, documento.provedor, tema, cfg)
         # O editor precisa do provedor para o auto-indent (`aumenta_indentacao`).
         self.editor.provedor = documento.provedor
+
+        # Arquivo grande: a view propria e a indexacao em thread (requisito 15).
+        # Montada AQUI, e nao pela janela: quem sabe que este documento nao cabe
+        # num QTextDocument e' o proprio documento, e a janela nao deve precisar
+        # perguntar antes de criar cada aba.
+        self.visor_grande = None
+        self.indexador = None
+        if documento.modo == MODO_GRANDE and documento.fonte_grande is not None:
+            self._montar_arquivo_grande(cfg, tema)
+
+    def _montar_arquivo_grande(self, cfg: dict, tema) -> None:
+        from textforge.grande.indice import Indexador
+        from textforge.grande.visor import PainelDeArquivoGrande
+
+        painel = PainelDeArquivoGrande(self.documento.fonte_grande, cfg, tema, self)
+        self.visor_grande = painel
+        self.registrar_view("grande", painel)
+        self.pilha.setCurrentWidget(painel)
+
+        self.indexador = Indexador(self.documento.fonte_grande, self)
+        # A barra de rolagem CRESCE a cada avanco: o usuario le' o comeco do
+        # arquivo enquanto o fim ainda esta' sendo varrido.
+        self.indexador.progresso.connect(self._ao_indexar)
+        self.indexador.concluido.connect(self._ao_terminar_indice)
+        painel.visor.linha_atual_mudou.connect(
+            lambda n: self.posicao_no_visor.emit(n, 0))
+        self.indexador.iniciar()
+
+    def _ao_indexar(self, varrido: int, total: int) -> None:
+        self.visor_grande.atualizar_barras()
+        self.indexacao_andou.emit(varrido, total)
+
+    def _ao_terminar_indice(self, linhas: int) -> None:
+        self.visor_grande.atualizar_barras()
+        self.indexacao_terminou.emit(linhas)
+
+    def encerrar(self) -> None:
+        """Solta os recursos do documento. Chamada ao fechar a aba.
+
+        Sem isto o mmap continua aberto e SEGURA o arquivo no Windows -- o
+        programa que gera o log nao conseguiria rotaciona-lo enquanto o TextForge
+        estivesse aberto, o que seria um efeito colateral inaceitavel de apenas
+        abrir um arquivo para ler.
+        """
+        if self.indexador is not None:
+            self.indexador.parar(fechar=True)
+            self.indexador = None
+            self.documento.fonte_grande = None
+        else:
+            self.documento.fechar()
 
     def _pedir_menu(self, ponto: QPoint) -> None:
         gerenciador = self.parent()
@@ -131,6 +189,9 @@ class Aba(QWidget):
         self.cfg = cfg
         self.editor.aplicar_configuracao(cfg)
         self.pintor.definir_configuracao(cfg)
+        for nome, widget in self._views.items():
+            if nome != "texto" and hasattr(widget, "aplicar_configuracao"):
+                widget.aplicar_configuracao(cfg)
 
     def definir_provedor(self, provedor) -> None:
         """Troca a linguagem desta aba."""
@@ -153,6 +214,8 @@ class GerenciadorAbas(QTabWidget):
     # primeira troca (nao havia nada conectado para desconectar).
     posicao_mudou = Signal(int, int)
     selecao_mudou = Signal(int, int)
+    indexacao_andou = Signal(int, int)
+    indexacao_terminou = Signal(int)
 
     def __init__(self, cfg: dict, tema, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -235,6 +298,12 @@ class GerenciadorAbas(QTabWidget):
             lambda l, c, a=aba: self._repassar(a, self.posicao_mudou, l, c))
         aba.editor.selecao_mudou.connect(
             lambda n, l, a=aba: self._repassar(a, self.selecao_mudou, n, l))
+        aba.posicao_no_visor.connect(
+            lambda l, c, a=aba: self._repassar(a, self.posicao_mudou, l, c))
+        aba.indexacao_andou.connect(
+            lambda v, t, a=aba: self._repassar(a, self.indexacao_andou, v, t))
+        aba.indexacao_terminou.connect(
+            lambda n, a=aba: self._repassar(a, self.indexacao_terminou, n))
         self._por_botao_de_fechar(indice)
         documento.qt.modificationChanged.connect(
             lambda _m, a=aba: self._atualizar_titulo(a))
@@ -250,6 +319,7 @@ class GerenciadorAbas(QTabWidget):
             return False
         if not self.pode_fechar(aba):
             return False
+        aba.encerrar()
         self.removeTab(indice)
         # deleteLater, e nao del: o Qt pode ainda ter eventos pendentes para este
         # widget, e destrui-lo agora derrubaria o programa dentro da fila.

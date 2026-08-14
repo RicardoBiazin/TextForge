@@ -73,12 +73,18 @@ quebrar, leia o comentário no código antes de "consertar" o teste.
 
 ## Consumo em disco e tempo
 
-Hoje as suítes escrevem só em pastas temporárias de poucos KB, apagadas no fim
-mesmo quando o teste estoura. A rodada completa leva ~30 s, dominada pelos
-processos filhos do teste de instância única.
+Quase todas as suítes escrevem só em pastas temporárias de poucos KB, apagadas no
+fim mesmo quando o teste estoura.
 
-Quando a etapa 10 entrar, `teste_indice_grande.py` vai gerar **~200 MB** em
-`%TEMP%\textforge-testes` (e 1 GB com `--gigante`), apagando no fim.
+A exceção é **`teste_indice_grande.py`**: ele gera **~200 MB** em
+`%TEMP%\textforge-testes` (e **~1 GB** com `--gigante`) e apaga no `finally`,
+mesmo se estourar no meio. Ele é a suíte mais lenta da rodada, e por isso tem um
+teto próprio de 900 s em `LIMITE_PROPRIO_S` — o teto geral continua em 180 s de
+propósito, para um diálogo modal esquecido aparecer em segundos em vez de pendurar
+a rodada.
+
+Sem ele, a rodada leva ~30 s, dominada pelos processos filhos do teste de
+instância única.
 
 ## Limites conhecidos
 

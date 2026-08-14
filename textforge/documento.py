@@ -45,7 +45,51 @@ MODO_TABELA = "tabela"
 MODO_HEX = "hex"
 MODO_GRANDE = "grande"
 
+# Quanto se le' do INICIO de um arquivo grande para decidir codificacao, fim de
+# linha e linguagem. Ler o arquivo inteiro para isso e' o que o modo de arquivo
+# grande existe para evitar; 256 KB dao amostra de sobra para as tres deteccoes.
+SONDAGEM_DE_ARQUIVO_GRANDE = 256 * 1024
+
 _contador_sem_titulo = 0
+
+
+def _aparar_sonda(dados: bytes) -> bytes:
+    """Corta os bytes finais que podem ser um caractere multibyte pela metade.
+
+    Uma sondagem termina num offset arbitrario. Se ela partir uma sequencia UTF-8
+    ao meio, a deteccao veria bytes invalidos que NAO existem no arquivo e marcaria
+    a leitura como suspeita -- o que poria o documento em somente leitura por um
+    defeito da propria sondagem.
+
+    Um caractere UTF-8 tem no maximo 4 bytes, entao remover ate' 3 bytes de
+    continuacao (10xxxxxx) mais o byte inicial resolve todos os casos.
+    """
+    fim = len(dados)
+    recuo = 0
+    while recuo < 4 and fim - recuo > 0 and dados[fim - recuo - 1] >= 0x80:
+        recuo += 1
+        # Byte INICIAL de sequencia (11xxxxxx): ele e o resto sao o caractere
+        # partido; parar aqui ja' removeu a sequencia inteira.
+        if dados[fim - recuo] >= 0xC0:
+            break
+    return dados[:fim - recuo] if recuo else dados
+
+
+def maior_linha(texto: str) -> int:
+    """Comprimento da linha mais longa, sem materializar a lista de linhas.
+
+    `max(len(l) for l in texto.split("\\n"))` num arquivo de 20 MB constroi uma
+    lista com todas as linhas so' para descartar. `find` percorre o mesmo texto em
+    C e nao aloca nada.
+    """
+    maior = 0
+    inicio = 0
+    while True:
+        quebra = texto.find("\n", inicio)
+        if quebra < 0:
+            return max(maior, len(texto) - inicio)
+        maior = max(maior, quebra - inicio)
+        inicio = quebra + 1
 
 
 def _proximo_sem_titulo() -> str:
@@ -105,6 +149,10 @@ class Documento(QObject):
         # redetecao posterior desfaca a escolha dele.
         self.linguagem_manual: bool = False
         self.aviso: str = ""                  # texto para a barra de status
+        # `FonteDeArquivo` viva quando `modo == MODO_GRANDE`. E' o dono do mmap, e
+        # por isso `fechar()` TEM de ser chamado ao fechar a aba: um mmap aberto
+        # segura o arquivo no Windows e impede outro programa de rotaciona-lo.
+        self.fonte_grande = None
 
         self.qt.modificationChanged.connect(self.modificado_mudou)
 
@@ -180,10 +228,19 @@ class Documento(QObject):
             self.qt.clearUndoRedoStacks()
 
     def total_de_linhas(self) -> int:
+        if self.fonte_grande is not None:
+            return self.fonte_grande.total_de_linhas()
         return self.qt.blockCount()
 
     def fonte(self):
-        """A `FonteDeTexto` deste documento, para busca, diff e estrutura."""
+        """A `FonteDeTexto` deste documento, para busca, diff e estrutura.
+
+        E' aqui que o seam do `fonte.py` se paga: a busca chama `documento.fonte()`
+        e recebe um `FonteDeArquivo` quando o arquivo e' grande, sem saber que os
+        dois mundos existem.
+        """
+        if self.fonte_grande is not None:
+            return self.fonte_grande
         from textforge.fonte import FonteDeDocumento
         return FonteDeDocumento(self.qt)
 
@@ -208,10 +265,20 @@ class Documento(QObject):
         """
         cfg = cfg or {}
         alvo = pathlib.Path(caminho)
-        dados = arquivos.ler_bytes(alvo)
-
         doc = cls(cfg)
         doc.caminho = alvo
+
+        # A decisao de modo vem do `stat`, ANTES de qualquer leitura. E' o ponto
+        # inteiro do requisito 15: `ler_bytes` num arquivo de 1 GB reserva 1 GB de
+        # RAM e trava a interface por dezenas de segundos -- e o teria feito antes
+        # de o programa sequer poder decidir que nao queria isso.
+        tamanho = arquivos.tamanho_de(alvo)
+        teto = int(cfg.get("limite_texto_mb", 20)) * 1024 * 1024
+        if tamanho > teto and not codec_forcado:
+            doc._abrir_como_grande(alvo, cfg, tamanho)
+            return doc
+
+        dados = arquivos.ler_bytes(alvo)
         doc.assinatura = Assinatura.de_caminho(alvo, dados)
         doc._aplicar_bytes(dados, cfg, codec_forcado)
         log.info("aberto %s (%d bytes, %s, %s, %s)", alvo, len(dados),
@@ -219,6 +286,66 @@ class Documento(QObject):
                  codificacao.ROTULO_EOL.get(doc.fim_de_linha, "?"),
                  doc.perfil.como_decidiu if doc.perfil else "?")
         return doc
+
+    # ==================================================================
+    # Arquivo grande (requisito 15)
+    # ==================================================================
+
+    def _abrir_como_grande(self, alvo: pathlib.Path, cfg: dict[str, Any],
+                           tamanho: int) -> None:
+        """Monta o documento em modo de arquivo grande, sem carregar o conteudo.
+
+        O `QTextDocument` fica VAZIO de proposito: quem tem o conteudo e' a
+        `FonteDeArquivo`, com mmap e indice esparso. Codificacao, fim de linha e
+        linguagem saem da SONDAGEM do inicio do arquivo.
+        """
+        from textforge.fonte import FonteDeArquivo
+
+        sonda = _aparar_sonda(arquivos.ler_bytes(alvo,
+                                                 SONDAGEM_DE_ARQUIVO_GRANDE))
+        # Assinatura sem sha256: calcular o hash de 1 GB no caminho de abertura
+        # anularia a abertura instantanea. Tamanho e mtime bastam para detectar
+        # alteracao externa num arquivo desse porte.
+        self.assinatura = Assinatura.de_caminho(alvo, None)
+        perfil = codificacao.detectar(
+            sonda, str(cfg.get("codificacao_preferida_legado", "cp1252")))
+        self.perfil = perfil
+        self.codec = perfil.codec
+        self.bom = perfil.bom
+        self.binario = perfil.binario
+        self.somente_leitura = True
+
+        if perfil.binario:
+            self.modo = MODO_HEX
+            self.aviso = (f"Conteudo binario{' (' + perfil.assinatura + ')'
+                                             if perfil.assinatura else ''}")
+            return
+
+        de_linha = codificacao.detectar_fim_de_linha(
+            perfil.texto,
+            codificacao.EOL_POR_NOME.get(
+                str(cfg.get("fim_de_linha_padrao", "crlf")), CRLF))
+        self.fim_de_linha = de_linha.fim_de_linha
+        self.fins_de_linha_mistos = de_linha.misto
+        self.detectar_linguagem(perfil.texto)
+
+        self.modo = MODO_GRANDE
+        self.fonte_grande = FonteDeArquivo(alvo, perfil.codec)
+        self.aviso = (f"Arquivo grande ({tamanho / (1024 * 1024):.0f} MB): "
+                      "somente leitura")
+        log.info("aberto em MODO GRANDE: %s (%d bytes, %s, %s)", alvo, tamanho,
+                 perfil.rotulo, codificacao.ROTULO_EOL.get(self.fim_de_linha, "?"))
+
+    def fechar(self) -> None:
+        """Libera o mmap do modo de arquivo grande. Idempotente.
+
+        Chamada pela janela ao fechar a aba. Um mmap aberto SEGURA o arquivo no
+        Windows: sem isto, o programa que gera o log nao conseguiria rotaciona-lo
+        enquanto o TextForge estivesse aberto.
+        """
+        if self.fonte_grande is not None:
+            self.fonte_grande.fechar()
+            self.fonte_grande = None
 
     def _aplicar_bytes(self, dados: bytes, cfg: dict[str, Any],
                        codec_forcado: str = "") -> None:
@@ -244,6 +371,20 @@ class Documento(QObject):
             self.somente_leitura = True
             self.aviso = (f"Conteudo binario{' (' + perfil.assinatura + ')'
                                              if perfil.assinatura else ''}")
+            return
+
+        limite_de_linha = int(cfg.get("limite_linha_caracteres", 20000))
+        if (self.caminho is not None and limite_de_linha > 0
+                and maior_linha(perfil.texto) > limite_de_linha):
+            # O gargalo real do QPlainTextEdit nao e' o NUMERO de linhas -- ele
+            # aguenta 400 mil --, e' UM bloco muito longo: o QTextLayout e'
+            # quadratico dentro do bloco, e um JS minificado de 4 MB numa linha so'
+            # congela a interface durante o layout. O visor pinta so' o que cabe na
+            # tela e nao passa por layout nenhum.
+            self._abrir_como_grande(self.caminho, cfg,
+                                    arquivos.tamanho_de(self.caminho))
+            self.aviso = (f"Linha unica com mais de {limite_de_linha:,} "
+                          "caracteres: somente leitura".replace(",", "."))
             return
 
         de_linha = codificacao.detectar_fim_de_linha(
@@ -313,6 +454,16 @@ class Documento(QObject):
         """Le' o MESMO arquivo com outra codificacao (requisito 7)."""
         if self.caminho is None:
             raise ValueError("documento sem arquivo nao pode ser reaberto")
+        if self.modo == MODO_GRANDE:
+            # Trocar a codificacao de um arquivo grande NAO o traz para a memoria:
+            # so' a `FonteDeArquivo` passa a decodificar de outro jeito, e o
+            # proximo `paintEvent` ja' mostra o resultado. Ler 1 GB aqui anularia
+            # tudo o que o modo faz.
+            self.codec = codec
+            if self.fonte_grande is not None:
+                self.fonte_grande.codificacao = codec
+            self.metadados_mudaram.emit()
+            return
         dados = arquivos.ler_bytes(self.caminho)
         self.assinatura = Assinatura.de_caminho(self.caminho, dados)
         self.somente_leitura = False
@@ -323,6 +474,14 @@ class Documento(QObject):
     def recarregar(self) -> None:
         """Descarta as alteracoes e le' o arquivo de novo."""
         if self.caminho is None:
+            return
+        if self.modo == MODO_GRANDE:
+            # Recarregar aqui e' reabrir o mmap e reindexar: o arquivo cresceu ou
+            # foi rotacionado, e o indice antigo aponta para offsets que mudaram.
+            self.fechar()
+            self._abrir_como_grande(self.caminho, {},
+                                    arquivos.tamanho_de(self.caminho))
+            self.metadados_mudaram.emit()
             return
         dados = arquivos.ler_bytes(self.caminho)
         self.assinatura = Assinatura.de_caminho(self.caminho, dados)

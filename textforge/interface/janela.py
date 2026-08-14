@@ -105,6 +105,8 @@ class JanelaPrincipal(QMainWindow):
         self.abas.titulo_mudou.connect(self._atualizar_titulo)
         self.abas.posicao_mudou.connect(self.barra.definir_posicao)
         self.abas.selecao_mudou.connect(self.barra.definir_selecao)
+        self.abas.indexacao_andou.connect(self._ao_indexar_arquivo_grande)
+        self.abas.indexacao_terminou.connect(self._ao_terminar_indexacao)
         # `_montar_busca` troca o widget central por um container com as abas e a
         # barra de busca embutida, entao vem ANTES do painel Estrutura.
         self._montar_busca()
@@ -502,6 +504,12 @@ class JanelaPrincipal(QMainWindow):
     def _ao_trocar_de_aba(self, aba: Aba | None) -> None:
         if aba is None:
             return
+        if aba.view_atual() == "grande":
+            visor = aba.visor_grande.visor
+            self.barra.definir_posicao(visor.linha_atual, 0)
+            self._mostrar_metadados()
+            visor.setFocus()
+            return
         editor = aba.editor
         # Nada de conectar/desconectar aqui: o gerenciador de abas ja' repassa os
         # sinais SO' da aba ativa (ver `_repassar` em abas.py). Trocar as conexoes
@@ -551,6 +559,10 @@ class JanelaPrincipal(QMainWindow):
         if doc.caminho is not None:
             self.vigia.esquecer(doc.caminho)
         sessao_mod.esquecer_copia(doc)
+        # O mmap do modo de arquivo grande NAO e' liberado aqui: quem faz isso e'
+        # `Aba.encerrar()`, que roda depois e sabe cancelar a thread de indexacao
+        # antes de fechar o mapeamento. Fechar o mmap com o worker lendo dele
+        # produziria um ValueError na thread de disco.
 
     # ==================================================================
     # Arquivo
@@ -576,7 +588,7 @@ class JanelaPrincipal(QMainWindow):
         if existente >= 0:
             self.abas.setCurrentIndex(existente)
             if linha:
-                self.abas.editor_atual().ir_para_linha(linha, coluna)
+                self._ir_para_linha_na_aba(linha, coluna)
             return True
 
         try:
@@ -603,9 +615,24 @@ class JanelaPrincipal(QMainWindow):
                 "conteudo NAO foi exibido como texto para nao mostrar "
                 "caracteres corrompidos.")
         if linha:
-            aba.editor.ir_para_linha(linha, coluna)
+            self._ir_para_linha_na_aba(linha, coluna)
         self._mostrar_metadados()
         return True
+
+    def _ir_para_linha_na_aba(self, linha: int, coluna: int = 0) -> None:
+        """Leva o cursor a uma linha, seja qual for a view da aba.
+
+        Usado pelo `--line` da linha de comando, pelo painel Resultados e pelo
+        painel Problemas. `linha` chega em BASE ZERO, como no resto do nucleo.
+        """
+        visor = self.visor_grande()
+        if visor is not None:
+            visor.ir_para_linha(linha)
+            visor.setFocus()
+            return
+        editor = self.abas.editor_atual()
+        if editor is not None:
+            editor.ir_para_linha(linha, coluna)
 
     def _aba_vazia_descartavel(self) -> Aba | None:
         aba = self.abas.aba_atual()
@@ -837,6 +864,93 @@ class JanelaPrincipal(QMainWindow):
         self._atualizar_titulo()
 
     # ==================================================================
+    # Modo de arquivo grande (requisito 15)
+    # ==================================================================
+
+    def visor_grande(self):
+        """O `VisorDeArquivoGrande` da aba ativa, ou None.
+
+        Os comandos que existem nos dois mundos (ir para linha, pesquisar,
+        copiar) consultam isto ANTES de pegar o editor. E' um `if` por comando, e
+        e' o preco de o modo de arquivo grande nao ter um QTextDocument -- muito
+        menor que o de manter duas janelas diferentes.
+        """
+        aba = self.abas.aba_atual()
+        if aba is None or aba.visor_grande is None:
+            return None
+        return aba.visor_grande.visor if aba.view_atual() == "grande" else None
+
+    def _ao_indexar_arquivo_grande(self, varrido: int, total: int) -> None:
+        self.barra.mostrar_progresso(varrido, total)
+        self.barra.definir_aviso(
+            f"Indexando... {varrido * 100 // max(1, total)}% "
+            f"({self.documento.total_de_linhas():,} linhas ate' agora)"
+            .replace(",", "."))
+
+    def _ao_terminar_indexacao(self, linhas: int) -> None:
+        self.barra.esconder_progresso()
+        self.barra.definir_aviso("")
+        self.barra.showMessage(f"Indice completo: {linhas:,} linhas"
+                               .replace(",", "."), 4000)
+        self._mostrar_metadados()
+
+    def _buscar_no_arquivo_grande(self, criterio: busca.Criterio) -> None:
+        """Pesquisa num arquivo grande: em thread, com resultados em streaming.
+
+        A barra de busca embutida nao serve aqui -- ela trabalha com `QTextCursor`
+        sobre um QTextDocument que, neste modo, esta' vazio de proposito. Os
+        achados vao para o painel Resultados, que ja' e' clicavel, cancelavel e
+        preparado para receber em lotes.
+        """
+        from textforge import tarefas
+        from textforge.busca_em_arquivos import Resultado, Resumo
+
+        visor = self.visor_grande()
+        if visor is None or self._criterio_valido(criterio) is None:
+            return
+        padrao = criterio.compilar()
+        fonte = visor.fonte
+        caminho = str(fonte.caminho)
+        # Realce imediato nas linhas JA visiveis: o resultado completo pode levar
+        # segundos num arquivo de 1 GB, e ver o termo aceso na tela na hora e' o
+        # que diz ao usuario que a busca entendeu o que ele pediu.
+        visor.definir_realce(padrao)
+
+        def trabalho(tarefa: tarefas.Tarefa) -> tuple[list, Resumo]:
+            achados: list[Resultado] = []
+            cortado = False
+            for achado in fonte.buscar(padrao, 0, cancelar=tarefa.cancelada):
+                tarefa.checar_cancelamento()
+                achados.append(Resultado(caminho=fonte.caminho,
+                                         linha=achado.linha,
+                                         coluna=achado.inicio,
+                                         tamanho=achado.fim - achado.inicio,
+                                         trecho=achado.texto[:400]))
+                if len(achados) >= bfa.LIMITE_DE_RESULTADOS:
+                    # Teto declarado, e nao truncamento silencioso: um termo comum
+                    # num log de 1 GB tem milhoes de ocorrencias, e enche-las numa
+                    # arvore da interface derrubaria o programa. O `cortado` faz o
+                    # painel dizer que parou.
+                    cortado = True
+                    break
+                tarefa.progresso(len(achados), -1)
+            return achados, Resumo(arquivos_lidos=1, arquivos_com_ocorrencia=1,
+                                   ocorrencias=len(achados), cortado=cortado)
+
+        self._cancelar_busca()
+        self.doca_resultados.show()
+        self.painel_resultados.comecar(criterio.descricao(), caminho)
+        tarefa = tarefas.Tarefa(f"buscar em {fonte.caminho.name}", trabalho)
+        tarefa.sinais.concluido.connect(self._busca_concluida)
+        tarefa.sinais.cancelado.connect(self.painel_resultados.cancelado)
+        tarefa.sinais.erro.connect(self.painel_resultados.falhou)
+        tarefa.sinais.progresso.connect(
+            lambda feito, _t: self.barra.mostrar_progresso(feito, -1))
+        tarefa.sinais.terminou.connect(self.barra.esconder_progresso)
+        self._tarefa_de_busca = tarefa
+        tarefas.rodar(tarefa, disco=True)
+
+    # ==================================================================
     # Modo tabela do CSV (requisito 6, item CSV)
     # ==================================================================
 
@@ -853,7 +967,9 @@ class JanelaPrincipal(QMainWindow):
         "Modo tabela (CSV)" do menu Ferramentas esta' sempre ativo e faz a deteccao
         na hora -- pagando o custo uma vez, quando o usuario pediu.
         """
-        if aba is None:
+        if aba is None or aba.view_atual() == "grande":
+            # Um CSV de 1 GB nao vira grade: montar a tabela exige o texto inteiro
+            # em memoria, que e' exatamente o que o modo de arquivo grande evita.
             return False
         if aba.view_atual() == "tabela":
             return True
@@ -1235,6 +1351,14 @@ class JanelaPrincipal(QMainWindow):
 
     def _procurar_ao_digitar(self, criterio: busca.Criterio) -> None:
         """Atualiza contador e realce de todas as ocorrencias, sem mover o cursor."""
+        visor = self.visor_grande()
+        if visor is not None:
+            # Num arquivo grande NAO ha' busca incremental a cada tecla: varrer 1
+            # GB por caractere digitado deixaria a digitacao impossivel. So' o
+            # realce das linhas visiveis acompanha; o Enter dispara a varredura.
+            criterio = self._criterio_valido(criterio)
+            visor.definir_realce(criterio.compilar() if criterio else None)
+            return
         editor = self.abas.editor_atual()
         if editor is None or self._criterio_valido(criterio) is None:
             return
@@ -1248,6 +1372,9 @@ class JanelaPrincipal(QMainWindow):
                 f"Mais de {len(faixas)} ocorrencias: o realce foi limitado", 4000)
 
     def _procurar(self, criterio: busca.Criterio, para_tras: bool) -> None:
+        if self.visor_grande() is not None:
+            self._buscar_no_arquivo_grande(criterio)
+            return
         editor = self.abas.editor_atual()
         if editor is None or self._criterio_valido(criterio) is None:
             return
@@ -1308,6 +1435,10 @@ class JanelaPrincipal(QMainWindow):
         for aba in self.abas.abas():
             aba.editor.selecoes.limpar("ocorrencias")
             aba.editor.selecoes.limpar("ocorrencia_atual")
+            # O visor de arquivo grande nao usa `ExtraSelection` -- ele guarda o
+            # proprio padrao e o aplica nas linhas visiveis a cada pintura.
+            if aba.visor_grande is not None:
+                aba.visor_grande.visor.definir_realce(None)
 
     def _substituir_atual(self, criterio: busca.Criterio,
                           substituicao: str) -> None:
@@ -1569,6 +1700,14 @@ class JanelaPrincipal(QMainWindow):
             self._aplicar_em_linhas(lambda l: ops.sufixar(l, texto))
 
     def ir_para_linha(self) -> None:
+        visor = self.visor_grande()
+        if visor is not None:
+            escolha = dialogos.pedir_linha(self, visor.fonte.total_de_linhas(),
+                                           visor.linha_atual)
+            if escolha is not None:
+                visor.ir_para_linha(escolha[0])
+                visor.setFocus()
+            return
         editor = self.abas.editor_atual()
         if editor is None:
             return
@@ -1885,6 +2024,12 @@ class JanelaPrincipal(QMainWindow):
 
         self._temporizador_de_recuperacao.stop()
         self.vigia.parar()
+        # As tarefas ja' foram canceladas pelo `encerrar()` de cada aba; esta
+        # espera curta so' garante que uma thread de indexacao nao continue lendo
+        # de um mmap enquanto o processo desmonta. Um teto de 2 s, e nao os 30 s
+        # padrao: fechar o editor nunca pode parecer travado.
+        from textforge import tarefas as _tarefas
+        _tarefas.esperar_tudo(2000)
         try:
             sessao_mod.salvar_sessao(instantaneo)
         except OSError as exc:

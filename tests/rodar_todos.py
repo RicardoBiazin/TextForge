@@ -23,6 +23,14 @@ RAIZ = os.path.dirname(AQUI)
 # filhos) leva ~25 s; 180 s e' folga suficiente e ainda pega um travamento rapido.
 LIMITE_POR_SUITE_S = 180
 
+# Tetos proprios, para as suites que legitimamente demoram mais. Manter o teto
+# GERAL baixo e' o que faz um dialogo modal esquecido aparecer em segundos em vez
+# de pendurar a rodada; subir o teto de todas para atender a uma so' desfaria isso.
+LIMITE_PROPRIO_S = {
+    # Gera ~200 MB em %TEMP% e varre o arquivo varias vezes.
+    "teste_indice_grande.py": 900,
+}
+
 # (arquivo, descricao). A lista cresce a cada etapa do projeto.
 SUITES = [
     # etapa 0 -- fundacao
@@ -61,6 +69,9 @@ SUITES = [
 
     # etapa 9 -- CSV
     ("teste_csv.py", "dialeto, registros multi-linha, tabela sem perder quoting"),
+
+    # etapa 10 -- arquivo grande
+    ("teste_indice_grande.py", "indice esparso, visor, fronteira de bloco"),
 ]
 
 
@@ -83,11 +94,12 @@ def main() -> int:
             print("%-28s AUSENTE  %s" % (arquivo, descricao))
             quebradas.append((arquivo, "arquivo de teste nao encontrado"))
             continue
+        limite = LIMITE_PROPRIO_S.get(arquivo, LIMITE_POR_SUITE_S)
         try:
             proc = subprocess.run([sys.executable, "-u", caminho],
                                   capture_output=True, text=True,
                                   errors="replace", env=ambiente, cwd=RAIZ,
-                                  timeout=LIMITE_POR_SUITE_S)
+                                  timeout=limite)
         except subprocess.TimeoutExpired as expirou:
             # Um limite por suite e' obrigatorio num projeto de interface: um
             # QMessageBox modal aberto sem ninguem para clicar bloqueia PARA
@@ -95,7 +107,7 @@ def main() -> int:
             # apontar a suite culpada.
             parcial = (expirou.stdout or "") + (expirou.stderr or "")
             print("%-28s  TRAVOU apos %ds  [PROBLEMA]  %s"
-                  % (arquivo, LIMITE_POR_SUITE_S, descricao))
+                  % (arquivo, limite, descricao))
             quebradas.append((arquivo,
                               "A SUITE TRAVOU. Causa mais comum: um dialogo "
                               "modal (QMessageBox / QFileDialog) aberto em modo "
