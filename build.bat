@@ -38,7 +38,7 @@ rem -- 1. A suite roda ANTES de empacotar --------------------------------------
 rem Empacotar codigo quebrado so' adianta a descoberta do problema para depois de
 rem o usuario instalar. A suite leva ~5 min por causa do teste de arquivo grande.
 echo.
-echo === [1/3] Rodando a suite de testes ===
+echo === [1/4] Rodando a suite de testes ===
 "%PY%" -u tests\rodar_todos.py
 if errorlevel 1 (
     echo.
@@ -49,16 +49,17 @@ if errorlevel 1 (
 rem -- 2. Empacotar ------------------------------------------------------------
 echo.
 if /i "%~1"=="umarquivo" (
-    echo === [2/3] Empacotando ONE-FILE ===
+    echo === [2/4] Empacotando ONE-FILE ===
     echo.
-    echo     AVISO: o modo um-arquivo descompacta ~70 MB em %%TEMP%% a CADA
-    echo     abertura, o que custa de 1,5 a 4 segundos de partida. Num editor
-    echo     aberto dezenas de vezes por dia isso briga com o requisito 34.
-    echo     Use-o para pendrive; para uso diario, prefira o one-dir.
+    echo     AVISO: o modo um-arquivo descompacta ~38 MB em %%TEMP%% a CADA
+    echo     abertura. MEDIDO nesta maquina: 4 a 6 segundos de partida, contra
+    echo     ~1 s do one-dir. Num editor aberto dezenas de vezes por dia isso
+    echo     briga com o requisito 34. Use-o para pendrive; para uso diario,
+    echo     prefira o one-dir.
     echo.
     set "TEXTFORGE_UM_ARQUIVO=1"
 ) else (
-    echo === [2/3] Empacotando ONE-DIR ===
+    echo === [2/4] Empacotando ONE-DIR ===
     set "TEXTFORGE_UM_ARQUIVO="
 )
 
@@ -77,7 +78,7 @@ rem `excludes` agressivos quebram o app SO' em tempo de execucao. Sem esta
 rem checagem, "os excludes quebraram o app" viraria relatorio de bug do usuario em
 rem vez de falha de build.
 echo.
-echo === [3/3] Autoverificacao do executavel gerado ===
+echo === [3/4] Autoverificacao do executavel gerado ===
 set "EXE=dist\TextForge\TextForge.exe"
 if /i "%~1"=="umarquivo" set "EXE=dist\TextForge.exe"
 
@@ -95,11 +96,29 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem -- 4. ZIP, so' no one-dir -------------------------------------------------
+rem O one-file ja' e' um arquivo autocontido: zipar um arquivo unico nao ajuda
+rem ninguem. No one-dir o ZIP e' o unico jeito de entregar o programa sem alguem
+rem copiar so' o .exe e descobrir que ele nao funciona.
+if /i not "%~1"=="umarquivo" (
+    echo.
+    echo === [4/4] Gerando o ZIP e o manifesto de arquivos ===
+    "%PY%" ferramentas\empacotar_zip.py
+    if errorlevel 1 (
+        echo AVISO: o ZIP nao foi gerado. O build em dist\TextForge continua valido.
+    )
+)
+
 echo.
 echo ============================================================
 echo  BUILD OK
 echo  Executavel: %EXE%
 for %%F in ("%EXE%") do echo  Tamanho do .exe: %%~zF bytes
+if /i not "%~1"=="umarquivo" (
+    echo.
+    echo  ATENCAO: o .exe do one-dir NAO funciona sozinho. Para distribuir,
+    echo  use o ZIP acima ^(ou gere o portatil: build.bat umarquivo^).
+)
 echo.
 echo  Para registrar em "Abrir com" (sem admin, so' HKCU):
 echo      powershell -ExecutionPolicy Bypass -File associar.ps1 .log .xml .csv

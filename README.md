@@ -58,6 +58,15 @@ Medido nesta máquina, e não estimado:
 97 MB estão em `_internal\` (Qt, Python, os recursos). Copiar só o `.exe` produz um
 erro do Windows na abertura — foi verificado.
 
+Por isso o `build.bat` gera, além da pasta, **`dist\TextForge-0.1.0-win64.zip`**
+(39 MB comprimido) com a pasta `TextForge\` na raiz — extrair no Explorer produz a
+pasta certa em vez de despejar 169 arquivos onde você estiver. Dentro do ZIP vai um
+**`ARQUIVOS.txt`** listando tudo agrupado por função, dizendo o que quebra se cada
+grupo faltar; o mesmo arquivo fica em `dist\TextForge-0.1.0-arquivos.txt`.
+
+Nada precisa ser instalado, nada é escrito fora da pasta do programa e de
+`%APPDATA%\TextForge`, e não é preciso administrador.
+
 **No one-file**, o `.exe` basta. O preço é que ele descompacta ~38 MB em `%TEMP%` **a
 cada abertura**, o que custa 4 a 6 s de partida — num editor aberto dezenas de vezes
 por dia isso incomoda. E ele aparece como **dois** processos no Gerenciador de

@@ -216,6 +216,21 @@ def testar_build_bat() -> None:
           "(excludes agressivos quebram so' em tempo de execucao) ***")
     checa("TEXTFORGE_UM_ARQUIVO" in texto, "serve os dois modos de empacotamento")
     checa("associar.ps1" in texto, "e diz como registrar no 'Abrir com'")
+    checa("empacotar_zip.py" in texto,
+          "gera o ZIP do one-dir (o .exe sozinho nao funciona nesse modo)")
+    checa("NAO funciona sozinho" in texto,
+          "*** e AVISA disso no fim do build, onde alguem vai ler ***")
+
+    zipador = RAIZ / "ferramentas" / "empacotar_zip.py"
+    checa(zipador.is_file(), "ferramentas/empacotar_zip.py existe")
+    fonte_zip = ler(zipador)
+    checa("ZIP_DEFLATED" in fonte_zip,
+          "o ZIP e' comprimido (sao ~99 MB de DLL, que comprimem bem)")
+    checa('"TextForge/' in fonte_zip,
+          "e tem a pasta TextForge/ na raiz — extrair no Explorer nao despeja "
+          "169 arquivos onde o usuario estiver")
+    checa("ARQUIVOS.txt" in fonte_zip,
+          "o manifesto vai DENTRO do zip, onde quem recebe vai procurar")
 
 
 def testar_associar_ps1() -> None:
