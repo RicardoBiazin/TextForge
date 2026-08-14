@@ -116,11 +116,16 @@ def _autoverificar(janela, log) -> int:
     """
     import importlib.util
 
+    # A lista e' o que o programa REALMENTE importa hoje. `difflib` estava aqui e
+    # foi tirado: o diff e' encaixe da v2, ninguem o importa, e exigi-lo fazia a
+    # autoverificacao reprovar um build correto. Uma checagem que reprova sem
+    # defeito e' pior que nenhuma -- ensina a ignorar o resultado.
     faltando = [nome for nome in (
         "PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets",
         "PySide6.QtNetwork",       # QLocalServer: instancia unica e "Abrir com"
         "charset_normalizer",      # deteccao de encoding
-        "json", "csv", "difflib", "mmap", "codecs", "unicodedata",
+        "json", "csv", "mmap", "codecs", "unicodedata", "hashlib", "base64",
+        "urllib.parse", "html", "sqlparse",
         "xml.parsers.expat", "xml.etree.ElementTree",
     ) if importlib.util.find_spec(nome) is None]
 

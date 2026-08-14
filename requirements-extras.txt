@@ -1,0 +1,19 @@
+# TextForge -- dependencias OPCIONAIS.
+#
+# O programa funciona inteiro sem nenhuma delas. Cada uma e' detectada em tempo de
+# execucao (`import` dentro de funcao, num try) e liga um recurso a mais. Quando
+# falta, o recurso se RECUSA com uma explicacao -- nunca produz um resultado pior
+# em silencio.
+#
+# Instalar:  .venv\Scripts\python.exe -m pip install -r requirements-extras.txt
+
+# XML com fidelidade maior: `pretty_print` do lxml preserva CDATA, DOCTYPE,
+# comentarios e PIs, e as mensagens de erro sao melhores. SEM ele, o formatador
+# de XML usa a stdlib e RECUSA formatar documentos com CDATA, em vez de
+# corrompe-los. Ver `formatadores/de_xml.py`.
+lxml>=5.2,<7
+
+# Formatar Python. Chamado como BIBLIOTECA (`black.format_str`), e nunca como
+# subprocesso -- ver requisito 35. Sem ele, "Formatar documento" num .py recusa
+# com a explicacao de que o black nao esta' instalado.
+black>=24.3

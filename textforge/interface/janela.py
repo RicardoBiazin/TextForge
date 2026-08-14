@@ -28,7 +28,7 @@ from textforge import (APP, AUTOR, VERSAO, arquivos, busca, codificacao,
 from textforge import busca_em_arquivos as bfa
 from textforge.documento import Documento
 from textforge.editor.indentacao import Indentacao
-from textforge.interface import dialogos
+from textforge.interface import acoes, dialogos
 from textforge.interface import tema as tema_mod
 from textforge.interface.abas import Aba, GerenciadorAbas
 from textforge.interface.barra_de_busca import BarraDeBusca
@@ -177,7 +177,10 @@ class JanelaPrincipal(QMainWindow):
     # ==================================================================
 
     def _aplicar_icone(self) -> None:
-        icone = recursos.raiz() / "icone.ico"
+        # Em `recursos/`, e nao na raiz do projeto: aquela pasta inteira ja' vai
+        # para dentro do .exe pelo `datas` do .spec, entao o icone funciona no
+        # fonte e no empacotado sem nenhuma regra a mais.
+        icone = recursos.caminho("icone.ico")
         if icone.is_file():
             self.setWindowIcon(QIcon(str(icone)))
 
@@ -239,6 +242,13 @@ class JanelaPrincipal(QMainWindow):
             # -- acompanhar log (requisito 26) --------------------------------
             "ferramentas.acompanhar": self.alternar_acompanhamento,
 
+            # -- extras (requisitos 24 e 25) ----------------------------------
+            "editar.comentar": self.alternar_comentario,
+            "ferramentas.paleta": self.abrir_paleta,
+            "ferramentas.abertura_rapida": self.abertura_rapida,
+            "ferramentas.configuracoes": self.abrir_configuracoes,
+            "ajuda.atalhos": self.mostrar_atalhos,
+
             # -- busca (requisito 8) -----------------------------------------
             "buscar.localizar": lambda: self.abrir_busca(),
             "buscar.substituir": lambda: self.abrir_busca(com_substituicao=True),
@@ -297,6 +307,12 @@ class JanelaPrincipal(QMainWindow):
             ligacoes[id_] = (lambda f=funcao: self._aplicar_em_linhas(f))
         for id_, funcao in cmod.POR_COMANDO.items():
             ligacoes[id_] = (lambda f=funcao: self._converter_caixa(f))
+
+        from textforge.servicos import conversoes, hashes
+        for id_, funcao in conversoes.POR_COMANDO.items():
+            ligacoes[id_] = (lambda f=funcao, i=id_: self._converter(f, i))
+        for id_, nome in hashes.POR_COMANDO.items():
+            ligacoes[id_] = (lambda a=nome: self.calcular_hash(a))
 
         self.vinculos.ligar_muitos(ligacoes)
 
@@ -1751,6 +1767,338 @@ class JanelaPrincipal(QMainWindow):
         editor = self.abas.editor_atual()
         if editor is not None:
             editor.converter_caixa(funcao)
+
+    # ==================================================================
+    # Conversoes e hashes (requisitos 24 e 25)
+    # ==================================================================
+
+    def _converter(self, funcao, id_do_comando: str) -> None:
+        """Converte a SELECAO. Sem selecao, o documento inteiro.
+
+        A codificacao passada e' a DO DOCUMENTO, e nao UTF-8 fixo: Base64 e URL
+        trabalham sobre bytes, e `"acao"` em cp1252 produz um Base64 diferente do
+        de UTF-8. Usar o codec do arquivo faz o resultado casar com o resto do que
+        o usuario esta' editando.
+        """
+        from textforge.servicos.conversoes import ConversaoInvalida
+
+        editor = self.abas.editor_atual()
+        doc = self.abas.documento_atual()
+        if editor is None or doc is None:
+            return
+        cursor = editor.textCursor()
+        tinha_selecao = cursor.hasSelection()
+        if tinha_selecao:
+            entrada = cursor.selectedText().replace(
+                codificacao.SEPARADOR_DE_PARAGRAFO, "\n")
+        else:
+            entrada = doc.texto()
+        if not entrada:
+            self.barra.showMessage("Nada para converter", 3000)
+            return
+
+        try:
+            saida = funcao(entrada, doc.codec)
+        except ConversaoInvalida as exc:
+            dialogos.avisar(self, "Nao foi possivel converter.", str(exc))
+            return
+
+        if saida == entrada:
+            self.barra.showMessage("A conversao nao mudou nada", 3000)
+            return
+
+        if tinha_selecao:
+            cursor.beginEditBlock()
+            try:
+                cursor.insertText(saida)
+            finally:
+                cursor.endEditBlock()
+        else:
+            from PySide6.QtGui import QTextCursor
+            inteiro = QTextCursor(editor.document())
+            inteiro.select(QTextCursor.SelectionType.Document)
+            inteiro.beginEditBlock()
+            try:
+                inteiro.insertText(saida)
+            finally:
+                inteiro.endEditBlock()
+        rotulo = acoes.REGISTRO.por_id(id_do_comando)
+        self.barra.showMessage(
+            f"{rotulo.rotulo_limpo if rotulo else 'Convertido'}"
+            f"{' (selecao)' if tinha_selecao else ' (documento inteiro)'}", 4000)
+
+    def calcular_hash(self, algoritmo: str) -> None:
+        """Hash da SELECAO, ou do ARQUIVO NO DISCO quando nao ha' selecao.
+
+        A distincao e' declarada na caixa de resultado, e nao e' detalhe: o hash do
+        arquivo tem BOM e CRLF; o do texto em memoria nao. Quem compara com um
+        `.sha256` publicado ou com o `certutil` quer o do ARQUIVO -- e nao ter isso
+        escrito na tela faria o usuario achar que uma das ferramentas esta' errada.
+        """
+        from textforge.servicos import hashes
+
+        editor = self.abas.editor_atual()
+        doc = self.abas.documento_atual()
+        if doc is None:
+            return
+        cursor = editor.textCursor() if editor is not None else None
+
+        if cursor is not None and cursor.hasSelection():
+            texto = cursor.selectedText().replace(
+                codificacao.SEPARADOR_DE_PARAGRAFO, "\n")
+            try:
+                valor = hashes.de_texto(texto, algoritmo, doc.codec)
+            except UnicodeEncodeError:
+                dialogos.avisar(
+                    self, f"Nao foi possivel calcular o {algoritmo}.",
+                    f"A selecao tem caracteres que nao existem em {doc.codec}. "
+                    f"Converta o arquivo para UTF-8 antes.")
+                return
+            self._mostrar_hash(algoritmo, valor,
+                               f"selecao ({len(texto)} caracteres, {doc.codec})")
+            return
+
+        if doc.caminho is None:
+            texto = doc.texto()
+            valor = hashes.de_texto(texto, algoritmo, doc.codec)
+            self._mostrar_hash(algoritmo, valor,
+                               f"texto em memoria ({doc.codec}, sem BOM, LF)")
+            return
+
+        self._hash_de_arquivo(doc.caminho, algoritmo)
+
+    def _hash_de_arquivo(self, caminho, algoritmo: str) -> None:
+        """Em thread: um SHA-512 de 1 GB leva segundos."""
+        from textforge import tarefas
+        from textforge.servicos import hashes
+
+        alvo = pathlib.Path(caminho)
+
+        def trabalho(tarefa: tarefas.Tarefa) -> str:
+            return hashes.de_arquivo(
+                alvo, algoritmo,
+                progresso=lambda lidos, total: tarefa.progresso(lidos, total),
+                cancelar=tarefa.cancelada)
+
+        tarefa = tarefas.Tarefa(f"{algoritmo} de {alvo.name}", trabalho)
+        tamanho = arquivos.tamanho_de(alvo)
+        tarefa.sinais.concluido.connect(
+            lambda valor: self._mostrar_hash(
+                algoritmo, str(valor),
+                f"arquivo no disco ({tamanho:,} bytes)".replace(",", "."))
+            if valor else None)
+        tarefa.sinais.progresso.connect(self.barra.mostrar_progresso)
+        tarefa.sinais.terminou.connect(self.barra.esconder_progresso)
+        tarefa.sinais.erro.connect(
+            lambda t: dialogos.avisar(self, f"Nao foi possivel calcular o "
+                                            f"{algoritmo}.", str(t)))
+        self.barra.showMessage(f"Calculando {algoritmo} de {alvo.name}...", 2000)
+        tarefas.rodar(tarefa, disco=True)
+
+    def _mostrar_hash(self, algoritmo: str, valor: str, origem: str) -> None:
+        from textforge.servicos import hashes
+
+        if not valor:
+            return
+        QApplication.clipboard().setText(valor)
+        dialogos.avisar(
+            self, f"{algoritmo}  —  {origem}",
+            f"{hashes.formatar(valor, agrupado=True)}\n\n"
+            f"(ja' copiado para a area de transferencia)")
+
+    # ==================================================================
+    # Comentar / descomentar (requisito 22)
+    # ==================================================================
+
+    def alternar_comentario(self) -> None:
+        """Ctrl+/ nas linhas selecionadas, usando o comentario DA LINGUAGEM.
+
+        Se qualquer linha nao estiver comentada, COMENTA todas; so' descomenta
+        quando todas ja' estao. E' o comportamento de todo editor, e evita o
+        vaivem confuso de alternar linha a linha.
+
+        O prefixo entra na MENOR indentacao do bloco, e nao na coluna zero: um
+        bloco de Python indentado receberia `# ` grudado na margem e a leitura do
+        codigo pioraria a cada comentario.
+        """
+        from PySide6.QtGui import QTextCursor
+
+        editor = self.abas.editor_atual()
+        doc = self.abas.documento_atual()
+        if editor is None or doc is None:
+            return
+        marca = getattr(doc.provedor, "comentario_de_linha", None)
+        if not marca:
+            dialogos.avisar(
+                self, f"{doc.nome_da_linguagem} nao tem comentario de linha.",
+                "Escolha outra linguagem no menu Linguagem, ou use o comentario "
+                "de bloco da propria sintaxe.")
+            return
+
+        cursor = editor.textCursor()
+        tinha_selecao = cursor.hasSelection()
+        primeira = doc.qt.findBlock(cursor.selectionStart()).blockNumber() \
+            if tinha_selecao else cursor.blockNumber()
+        ultima = doc.qt.findBlock(cursor.selectionEnd()).blockNumber() \
+            if tinha_selecao else primeira
+        coluna_original = cursor.positionInBlock()
+
+        linhas = [doc.qt.findBlockByNumber(n).text()
+                  for n in range(primeira, ultima + 1)]
+        uteis = [l for l in linhas if l.strip()]
+        if not uteis:
+            return
+        comentadas = all(l.lstrip().startswith(marca) for l in uteis)
+        recuo = min(len(l) - len(l.lstrip()) for l in uteis)
+
+        novas = []
+        for linha in linhas:
+            if not linha.strip():
+                novas.append(linha)
+            elif comentadas:
+                sem = linha.lstrip()
+                depois = sem[len(marca):]
+                # Tira o espaco que NOS colocamos, e nao um do usuario: so' quando
+                # ele e' o primeiro caractere depois da marca.
+                novas.append(linha[:len(linha) - len(sem)]
+                             + (depois[1:] if depois.startswith(" ") else depois))
+            else:
+                novas.append(linha[:recuo] + f"{marca} " + linha[recuo:])
+
+        alvo = QTextCursor(doc.qt)
+        alvo.setPosition(doc.qt.findBlockByNumber(primeira).position())
+        fim = doc.qt.findBlockByNumber(ultima)
+        alvo.setPosition(fim.position() + fim.length() - 1,
+                         QTextCursor.MoveMode.KeepAnchor)
+        alvo.beginEditBlock()
+        try:
+            alvo.insertText("\n".join(novas))
+        finally:
+            alvo.endEditBlock()
+
+        # A SELECAO E' RESTAURADA sobre as mesmas linhas. `insertText` colapsa o
+        # cursor no fim do texto inserido, e sem restaurar, um segundo Ctrl+/
+        # atuaria so' na ULTIMA linha -- ou seja, comentar e descomentar deixaria
+        # o bloco pela metade. E' tambem o que o usuario espera: a selecao
+        # sobrevive ao comando, para ele poder repetir.
+        novo = QTextCursor(doc.qt)
+        bloco_final = doc.qt.findBlockByNumber(ultima)
+        if tinha_selecao:
+            novo.setPosition(doc.qt.findBlockByNumber(primeira).position())
+            novo.setPosition(bloco_final.position() + bloco_final.length() - 1,
+                             QTextCursor.MoveMode.KeepAnchor)
+        else:
+            # Sem selecao, o cursor volta para a mesma linha, com a coluna
+            # deslocada pelo prefixo que entrou (ou saiu).
+            deslocamento = len(novas[0]) - len(linhas[0])
+            novo.setPosition(min(bloco_final.position()
+                                 + max(0, coluna_original + deslocamento),
+                                 bloco_final.position()
+                                 + bloco_final.length() - 1))
+        editor.setTextCursor(novo)
+
+    # ==================================================================
+    # Paleta de comandos e abertura rapida (requisito 23)
+    # ==================================================================
+
+    def abrir_paleta(self) -> None:
+        from textforge.interface import paleta_de_comandos as pal
+
+        paleta = pal.PaletaDeComandos(self)
+        paleta.definir_itens(
+            pal.itens_de_comandos(self.vinculos),
+            dica="Digite as iniciais — \"fdoc\" acha \"Formatar documento\". "
+                 "Enter executa, Esc fecha.")
+        paleta.escolhido.connect(self.vinculos.acionar)
+        self._estilizar_paleta(paleta)
+        paleta.mostrar()
+
+    def abertura_rapida(self) -> None:
+        from textforge.interface import paleta_de_comandos as pal
+
+        doc = self.abas.documento_atual()
+        pasta = doc.caminho.parent if (doc and doc.caminho) else None
+        abertos = [str(a.documento.caminho) for a in self.abas.abas()
+                   if a.documento.caminho is not None]
+        paleta = pal.PaletaDeComandos(self)
+        paleta.definir_itens(
+            pal.itens_de_arquivos(list(self.cfg.get("recentes", [])),
+                                  abertos, pasta),
+            dica=f"Abertos, recentes e a pasta {pasta or '(nenhuma)'}. "
+                 "A varredura da pasta tem teto — não é um indexador.")
+        paleta.escolhido.connect(self.abrir_arquivo)
+        self._estilizar_paleta(paleta)
+        paleta.mostrar()
+
+    def _estilizar_paleta(self, paleta) -> None:
+        tema = self.tema
+        paleta.setStyleSheet(f"""
+            QDialog {{ background: {tema.cor('janela.fundo').name()};
+                       border: 1px solid {tema.cor('janela.borda').name()}; }}
+            QLineEdit {{ background: {tema.cor('janela.campo_fundo').name()};
+                         color: {tema.cor('janela.texto').name()};
+                         border: 1px solid {tema.cor('janela.borda').name()};
+                         padding: 6px; font-size: 13px; }}
+            QListWidget {{ background: {tema.cor('janela.fundo').name()};
+                           color: {tema.cor('janela.texto').name()};
+                           border: none; }}
+            QListWidget::item {{ padding: 3px 4px; }}
+            QListWidget::item:selected {{
+                background: {tema.cor('janela.destaque').name()};
+                color: {tema.cor('janela.texto_do_destaque').name()}; }}
+            QLabel#rodapeDaPaleta {{
+                color: {tema.cor('janela.texto_apagado').name()};
+                font-size: 11px; }}
+        """)
+
+    # ==================================================================
+    # Configuracoes e ajuda
+    # ==================================================================
+
+    def abrir_configuracoes(self) -> None:
+        """Abre o `config.json` COMO ARQUIVO, numa aba do proprio editor.
+
+        Nao ha' dialogo de preferencias, e a escolha e' consciente: as ~40 chaves
+        de configuracao ja' estao documentadas por comentario no `configuracao.py`,
+        o publico deste programa edita JSON o dia inteiro, e um dialogo seria mais
+        codigo de interface para manter em sincronia com o arquivo. O arquivo E' a
+        interface -- e ele e' recarregado ao salvar.
+        """
+        caminho = configuracao.caminho_config()
+        try:
+            if not caminho.exists():
+                configuracao.salvar(self.cfg)
+        except OSError as exc:
+            dialogos.avisar(self, "Nao foi possivel criar o config.json.",
+                            str(exc))
+            return
+        if self.abrir_arquivo(str(caminho)):
+            self.barra.showMessage(
+                "Edite e salve: as preferencias sao reaplicadas ao salvar.", 8000)
+
+    def mostrar_atalhos(self) -> None:
+        """Lista os atalhos GERADOS do registro, e nao uma lista escrita a mao.
+
+        Uma lista escrita a mao desatualiza no primeiro atalho que mudar, e o
+        usuario passa a nao confiar em nenhuma linha dela.
+        """
+        from textforge.interface import paleta_de_comandos as pal
+
+        itens = []
+        for comando in acoes.REGISTRO.comandos:
+            if not comando.atalho or not self.vinculos.tem_tratador(comando.id):
+                continue
+            itens.append((comando.id, f"{comando.atalho}    "
+                                      f"{comando.rotulo_limpo}",
+                          comando.caminho_na_palette))
+        paleta = pal.PaletaDeComandos(self)
+        paleta.definir_itens(
+            sorted(itens, key=lambda i: i[2]),
+            dica=f"{len(itens)} atalhos ativos. Enter executa o comando.")
+        paleta.escolhido.connect(self.vinculos.acionar)
+        self._estilizar_paleta(paleta)
+        paleta.setWindowTitle("Atalhos")
+        paleta.mostrar()
 
     def _marcador(self, adiante: bool) -> None:
         editor = self.abas.editor_atual()

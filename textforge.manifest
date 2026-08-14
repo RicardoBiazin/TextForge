@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="TextForge" version="0.1.0.0"
+                    processorArchitecture="amd64"/>
+  <description>TextForge - editor de arquivos tecnicos</description>
+
+  <!-- asInvoker, nunca requireAdministrator. Um editor nao precisa de privilegio,
+       e ELEVADO o arrastar-e-soltar do Explorer para de funcionar: o Windows
+       proibe uma janela de integridade alta receber drop de uma de integridade
+       media. Isso mataria o requisito 19. -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 e 11. Sem estes GUIDs, GetVersionEx mente dizendo 8.1 e o
+           Qt escolhe caminhos de compatibilidade antigos. -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
+    </application>
+  </compatibility>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <!-- Caminho longo: um .log em pasta funda de rede passa facil de 260
+           caracteres, e sem isto o open() falha com um erro incompreensivel. -->
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+      <!-- DPI por monitor: sem isto, arrastar a janela de um monitor 4K para um
+           1080p deixa a fonte borrada ate' reiniciar o programa. -->
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <!-- UTF-8 como codepage do processo (Windows 10 1903+): faz as APIs ANSI
+           usadas por bibliotecas de terceiros nao destruirem acentos. -->
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+</assembly>

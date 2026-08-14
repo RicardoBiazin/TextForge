@@ -75,6 +75,12 @@ SUITES = [
 
     # etapa 11 -- acompanhar log
     ("teste_tail.py", "leitura incremental, multibyte cortado, rotacao"),
+
+    # etapa 12 -- extras, paleta e empacotamento
+    ("teste_conversoes.py", "Base64/URL/HTML/JSON e o peso da codificacao"),
+    ("teste_hash.py", "digests contra valores publicados, texto x arquivo"),
+    ("teste_paleta.py", "busca por subsequencia, abertura rapida, Ctrl+/"),
+    ("teste_empacotamento.py", "spec, versao, manifesto, associar.ps1 (estatico)"),
 ]
 
 

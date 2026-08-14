@@ -1,0 +1,196 @@
+# TextForge
+
+Editor de arquivos técnicos para Windows: `.txt` `.log` `.dat` `.csv` `.ini`
+`.json` `.xml` `.yaml` `.py` `.php` `.js` `.ts` `.html` `.css` `.sql` `.md`
+`.bat` `.ps1` `.sh` e o resto do que aparece no dia a dia.
+
+Existe para o que o Bloco de Notas não faz e a IDE faz pesado demais: abrir um
+arquivo, olhar, procurar, corrigir e fechar — sem esperar indexação de projeto e
+sem corromper a codificação no caminho.
+
+**O que ele nunca faz** — e isso é projeto, não omissão:
+
+- não executa nada do que você abre. Um `.py`, um `.bat` ou um `.ps1` é **dado**,
+  e é exibido como texto. Não há comando "Executar", e não haverá.
+- não altera arquivo em silêncio. Codificação, BOM, fim de linha, indentação e a
+  ausência de quebra final são **preservados** ao salvar.
+- não formata nada sozinho. Formatar é sempre uma ação sua.
+- não é editor de documentos. DOC e DOCX estão fora de escopo.
+
+---
+
+## Instalação a partir do fonte
+
+```bat
+py -3.13 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe app.py
+```
+
+Opcionais (o programa funciona inteiro sem eles):
+
+```bat
+.venv\Scripts\python.exe -m pip install -r requirements-extras.txt
+```
+
+`lxml` melhora a fidelidade do XML (sem ele, formatar um XML **com CDATA** é
+recusado em vez de corrompido). `black` liga o formatador de Python.
+
+## Gerar o executável
+
+```bat
+build.bat              :: dist\TextForge\TextForge.exe   (one-dir, recomendado)
+build.bat umarquivo    :: dist\TextForge.exe             (portátil)
+```
+
+O `build.bat` roda a suíte **antes** de empacotar e uma fumaça do `.exe` **depois**
+(`TextForge.exe --autoverificacao`). Excludes agressivos quebram o programa só em
+tempo de execução; sem a fumaça, isso chegaria como relatório de bug do usuário.
+
+O modo portátil descompacta ~70 MB em `%TEMP%` **a cada abertura** — 1,5 a 4 s de
+partida. Bom para pendrive, ruim para uso diário.
+
+## Registrar em "Abrir com"
+
+```powershell
+.\associar.ps1 .log .xml .csv        # registra SÓ o que você pedir
+.\associar.ps1 .log -Simular         # mostra o que faria, sem escrever
+.\associar.ps1 -Remover              # desfaz
+```
+
+Escreve **apenas em HKCU** — sem administrador. Usa `OpenWithProgids`, que
+**acrescenta** o TextForge à lista "Abrir com" sem roubar o programa padrão: seu
+`.xml` continua abrindo no que você já usa.
+
+**Aviso honesto:** no Windows 11 o item do menu de contexto aparece em *"Mostrar
+mais opções"*. O menu novo exige uma extensão de shell `IExplorerCommand`
+empacotada em MSIX, e isso não sai de um script.
+
+---
+
+## O que ele faz
+
+**Arquivo.** Abas, sessão restaurada, arrastar-e-soltar, arquivos recentes,
+"Abrir com" com uma instância só, salvamento atômico (`ReplaceFileW`, que preserva
+ACLs e fluxos alternativos), aviso de alteração externa com *Recarregar / Manter o
+meu / Comparar*.
+
+**Codificação (o motivo principal do programa existir).** Detecção em cascata:
+BOM → binário? → UTF-16 sem BOM → UTF-8 estrito → codificação declarada →
+charset-normalizer → cp1252. Se a leitura produzir um caractere inválido, a barra
+de status mostra a codificação **em vermelho** e a aba entra em somente leitura —
+salvar por cima de um arquivo que não foi lido direito destrói dados. Converter
+avisa **antes**, listando os caracteres que seriam perdidos, com o nome Unicode de
+cada um.
+
+**Realce** para 23 linguagens, com contextos multi-linha de verdade: PHP dentro de
+HTML, `<script>` e `<style>`, heredoc de PHP, comentário de bloco atravessando
+linhas.
+
+**Formatar e validar** XML, JSON, SQL, CSS, HTML e Python. Erro vai para um painel
+navegável, não para um diálogo modal. Quando formatar **perderia informação**, o
+programa **recusa** e explica — um JSON com chave duplicada não é reindentado, é
+recusado, porque reindentar apagaria dados.
+
+**Pesquisa** incremental com contador, regex com grupos, "na seleção", marcadores
+na margem, e pesquisa em pasta com filtros, em thread cancelável.
+
+**CSV em modo tabela.** Editar células numa grade e voltar para o texto. Sem
+edição, o texto volta **byte a byte idêntico** — inclusive aspas desnecessárias e
+espaços depois do delimitador.
+
+**Arquivo grande.** Acima de 20 MB (ou com uma linha acima de 20 mil caracteres) o
+arquivo abre num visor virtualizado, somente leitura, com índice esparso construído
+em thread. 178 MB abrem em **0,01 s**. Rolar, ir para linha, pesquisar e copiar
+continuam funcionando.
+
+**Acompanhar log (tail).** Segue um `.log` que está sendo escrito, com pausar e
+retomar, detecção de truncamento e de rotação, e teto de memória automático.
+
+**Extras.** Base64, URL, HTML e JSON (escapar e desescapar), MD5/SHA-1/SHA-256/
+SHA-512, paleta de comandos (`Ctrl+Shift+P`), abertura rápida (`Ctrl+P`).
+
+---
+
+## Onde ficam as coisas
+
+| | |
+|---|---|
+| Configuração | `%APPDATA%\TextForge\config.json` |
+| Log | `%APPDATA%\TextForge\textforge.log` |
+| Erros não tratados | `%APPDATA%\TextForge\erro.log` |
+| Sessão | `%APPDATA%\TextForge\sessao.json` |
+| Recuperação | `%APPDATA%\TextForge\recuperacao\` |
+| Temas do usuário | `%APPDATA%\TextForge\temas\*.json` |
+| Linguagens do usuário | `%APPDATA%\TextForge\linguagens\*.json` |
+
+**Modo portátil:** um `config.json` ao lado do `.exe` tem precedência sobre o de
+`%APPDATA%`.
+
+Não há diálogo de preferências, e é decisão consciente: **Ferramentas →
+Configurações** abre o `config.json` numa aba do próprio editor, e salvar reaplica.
+As ~40 chaves estão documentadas por comentário em
+[configuracao.py](textforge/configuracao.py); o público deste programa edita JSON o
+dia inteiro, e um diálogo seria mais interface para manter em sincronia com o
+arquivo.
+
+Um tema do usuário faz **merge** sobre o embutido — pode declarar só os três papéis
+que quiser mudar.
+
+---
+
+## Privacidade e segurança
+
+O modelo de ameaça em uma linha: **o TextForge abre arquivos não confiáveis que por
+acaso são formatos executáveis.** Tudo decorre de *um arquivo é dado, sempre*.
+
+- **Nada é executado.** `eval`, `exec`, `compile`, `os.system`, `subprocess` com
+  `shell=True`, `pickle.load` e `yaml.load` sem `SafeLoader` são proibidos no
+  pacote inteiro, e há um teste que **varre o próprio fonte** procurando por eles.
+  `ast.parse` é permitido: analisa sem executar.
+- **XML não expande DTD.** Entidade externa (XXE) e *billion laughs* são recusados
+  com explicação e com um caminho de saída ("validar sem o DTD"), e não com uma
+  parede.
+- **O log nunca grava conteúdo de documento** — só caminhos e tamanhos. Um
+  traceback com um trecho do seu arquivo dentro, enviado por e-mail, é vazamento
+  de dados.
+- **A pasta de recuperação guarda cópias em texto claro** em `%APPDATA%`. Se você
+  edita arquivos sensíveis, use `recuperacao_pastas_excluidas` no `config.json`.
+
+## Limites conhecidos
+
+Escritos aqui para não serem descobertos no pior momento:
+
+- Arquivo grande é **somente leitura**. Editar exigiria pilha de desfazer
+  virtualizada e reescrever 1 GB a cada salvamento; o caso real é ler e pesquisar.
+- `</script>` **dentro de uma string JavaScript** não fecha o bloco no realce (o
+  navegador fecharia). Corrigir custaria uma busca separada por bloco no laço
+  central do pintor.
+- A barra de rolagem horizontal do visor de arquivo grande se ajusta à **maior
+  linha já vista**, e cresce conforme você rola. Medir a linha mais longa de 1 GB
+  exigiria lê-lo inteiro.
+- A validação de SQL é **estrutural** (parênteses e apóstrofos), não sintática.
+  Cada banco tem sua gramática, e prometer validação completa seria enganar.
+- Não há filtro no acompanhamento de log. O que sairia barato filtraria só as
+  linhas futuras, deixando o histórico completo na tela — confunde mais que ajuda.
+- Nenhum teste exercita arquivo grande em **compartilhamento de rede** nem escreve
+  no registro de verdade.
+
+## Testes
+
+```bat
+.venv\Scripts\python.exe tests\rodar_todos.py
+```
+
+2.445 verificações em 31 suítes, sem pytest. `tests\README.md` diz o que cada suíte
+cobre, quanto ocupa em `%TEMP%` e — a seção que importa — **quais regressões elas
+guardam**.
+
+`teste_indice_grande.py` gera ~200 MB em `%TEMP%` (1 GB com `--gigante`) e apaga no
+fim.
+
+## Licença
+
+MIT — veja [LICENSE](LICENSE). PySide6-Essentials é LGPLv3, compatível.
+PyQt e QScintilla ficaram **fora** de propósito: são GPL da Riverbank e
+contaminariam a licença deste projeto.

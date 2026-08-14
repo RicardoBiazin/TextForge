@@ -29,15 +29,49 @@ Para rodar uma suíte isolada:
 
 ## Suítes
 
+Na ordem em que `rodar_todos.py` as executa. "Precisa de" diz o que a suíte exige
+para rodar; sem PySide6 ela imprime **PULADO** em vez de falhar.
+
 | Arquivo | O que cobre | Precisa de |
 |---|---|---|
 | `teste_configuracao.py` | `padrao()` cobre o requisito 30, round-trip, config corrompido, merge de chave nova, pastas de `%APPDATA%`, modo portátil, `sys._MEIPASS`, lista de recentes | nada |
 | `teste_cli.py` | `--line`, `--col`, vários arquivos, caminho relativo, e a **recusa** de dispositivos do Windows (`CON`, `NUL`, `COM1`, `LPT1`, `PRN`, `AUX`) | nada |
 | `teste_tarefas.py` | progresso limitado a 10 Hz, cancelamento cooperativo, exceção no worker virando sinal, pools separados | PySide6 |
 | `teste_instancia_unica.py` | canal por usuário, entrega **entre processos**, 5 processos simultâneos, lixo no canal, pipe órfão | PySide6 |
+| `teste_fonte.py` | a **mesma bateria** nas 3 implementações de `FonteDeTexto`, sobre o mesmo conteúdo | PySide6 |
+| `teste_acoes.py` | nenhum atalho duplicado, nenhum `Ctrl+Alt+letra` (é AltGr no ABNT2), todo comando com rótulo, geração de menu e palette | PySide6 |
+| `teste_tema.py` | todo papel citado por qualquer provedor existe nos dois temas, merge de tema parcial, contraste | PySide6 |
+| `teste_indentacao.py` | detecção **por arquivo** (tab, 2, 4, 8 e misto), largura visual, conversões | nada |
+| `teste_operacoes_linha.py` | ordenar, inverter, duplicar, remover duplicadas, aparar, e as conversões de caixa | nada |
+| `teste_editor.py` | margem crescendo de 99 para 100 linhas, `paintEvent` com documento vazio, Tab em bloco num só undo, camadas de seleção, marcadores | PySide6 |
+| `teste_janela.py` | janela, menus gerados, comandos ligados, e a checagem de que o não implementado aparece **desabilitado** | PySide6 |
+| `teste_codificacao.py` | cada BOM, UTF-32 x UTF-16, UTF-16 sem BOM, cp1252, `.dat` binário x largura fixa, assinaturas, perdas na conversão | nada |
+| `teste_documento.py` | **round-trip byte a byte de 12 fixtures**, salvar atômico, `.tfnew` nunca sobrando, `AlteradoNoDisco` | PySide6 |
+| `teste_vigia.py` | alteração externa por watcher **e** por consulta periódica | PySide6 |
+| `teste_abas.py` | identidade por arquivo (`resolve()` + caixa), asterisco de modificado, menu de contexto, documento liberado ao fechar | PySide6 |
+| `teste_sessao.py` | round-trip da sessão, **trava detectada por rename** (não por PID), recuperação guardando o codec | PySide6 |
+| `teste_realce.py` | regras combinadas num regex, pilha internada, contexto multi-linha, regra que casa vazio, quantificador aninhado | PySide6 |
+| `teste_linguagens.py` | resolução por nome/extensão/shebang/conteúdo, prioridade de plugin, e **cada provedor** validado (papéis, regex, dobra) | PySide6 |
+| `teste_realce_embutido.py` | PHP em HTML, JS/CSS em tag, heredoc `<<<SQL`, pilha de profundidade 4, pareamento | PySide6 |
+| `teste_painel_estrutura.py` | árvore por `ast`, fallback regex em arquivo com erro de sintaxe, filtro, navegação | PySide6 |
+| `teste_busca.py` | critério, **offsets de `re.finditer` casando com `QTextCursor`**, substituir 500 num só undo, regex que casa vazio | PySide6 |
+| `teste_busca_em_arquivos.py` | varredura, filtros, junction auto-referente sem laço, cancelamento | PySide6 |
+| `teste_seguranca.py` | XXE, billion laughs, **varredura estática do próprio fonte**, prova de efeito colateral | nada |
+| `teste_formatadores.py` | fidelidade de XML/JSON/SQL/CSS/HTML/Python, idempotência, recusas, coluna do expat | PySide6 |
+| `teste_csv.py` | dialeto, registro multi-linha, **`para_texto()` sem edição idêntico**, parse lazy | PySide6 |
+| `teste_indice_grande.py` | índice esparso em 20 pontos, **padrão na fronteira de bloco**, teto de RAM, visor, cancelamento | PySide6, ~200 MB em `%TEMP%` |
+| `teste_tail.py` | leitura incremental, **multibyte cortado**, linha parcial, truncamento, rotação, pausar/retomar | PySide6 |
+| `teste_conversoes.py` | Base64/URL/HTML/JSON, tolerâncias do Base64, e o peso da **codificação** | nada |
+| `teste_hash.py` | digests contra **valores publicados**, leitura em blocos, texto x arquivo | nada |
+| `teste_paleta.py` | busca por **subsequência**, abertura rápida com teto, comentar/descomentar | PySide6 |
+| `teste_empacotamento.py` | `.spec`, `versao.txt`, manifesto, `associar.ps1` com BOM, imports proibidos — tudo **estático** | nada |
 
 `ajudante_enviar.py` não é uma suíte — é o processo auxiliar que o
 `teste_instancia_unica.py` dispara.
+
+**Ao acrescentar uma suíte:** entre nesta tabela e em `SUITES` do `rodar_todos.py`.
+Se ela demorar mais que 180 s, use `LIMITE_PROPRIO_S` — não suba o teto geral, que é
+o que faz um diálogo modal esquecido aparecer em segundos.
 
 ## Regressões que estas suítes guardam
 
@@ -51,6 +85,22 @@ quebrar, leia o comentário no código antes de "consertar" o teste.
   arquivo de integração isso é destruição silenciosa e torna qualquer `fc /b`
   inútil. Se este teste quebrar, o `ModeloCsv` voltou a reconstruir linhas que
   ninguém editou — o `registros_crus`/`sujas` existe exatamente para impedir isso.
+- **`teste_empacotamento.py`, "PySide6.QtNetwork NÃO está nos excludes".** É onde
+  vivem `QLocalServer`/`QLocalSocket` — instância única e "Abrir com". Excluí-lo
+  parece razoável ("não usamos rede") e mata os dois **só no `.exe`**. O teste lê a
+  lista pela **árvore** (`ast`), e não por busca de texto: o próprio `.spec` explica
+  em comentário por que QtNetwork não pode sair, e uma busca textual acusaria esse
+  comentário como se fosse a exclusão.
+- **`teste_empacotamento.py`, "todo módulo de linguagem está no `__init__`".** Criar
+  `lua.py` e esquecer de registrar produz "o realce não funciona nesse arquivo" na
+  máquina do usuário, e nada aqui. Um módulo conta como linguagem quando define
+  `PROVEDORES` — critério derivado do código, não uma lista de exceções à mão.
+- **`teste_conversoes.py` e `teste_hash.py`, "a codificação importa".** `"ação"` em
+  cp1252 e em UTF-8 são bytes diferentes, logo Base64 diferente e hash diferente. Um
+  editor que assumisse UTF-8 sempre geraria um Base64 que decodifica errado no
+  sistema de destino. Os digests são conferidos contra **valores publicados** (RFC
+  1321, FIPS 180), e não contra o próprio `hashlib` — comparar com `hashlib` provaria
+  apenas que o módulo chama o `hashlib`.
 - **`teste_tail.py`, "caractere UTF-8 multibyte cortado na fronteira".** Um `ç` em
   UTF-8 são dois bytes. Se o processo gravou o primeiro e ainda não o segundo,
   `bytes.decode` produziria um **U+FFFD permanente** no lugar de um caractere que
