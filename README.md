@@ -34,7 +34,15 @@ Opcionais (o programa funciona inteiro sem eles):
 ```
 
 `lxml` melhora a fidelidade do XML (sem ele, formatar um XML **com CDATA** é
-recusado em vez de corrompido). `black` liga o formatador de Python.
+recusado em vez de corrompido). `black` liga o formatador de Python — sem ele,
+"Formatar documento" num `.py` avisa em vez de aplicar uma indentação caseira, que
+é o caminho mais curto para quebrar código, porque em Python a indentação **é** a
+sintaxe.
+
+> **Ao gerar o `.exe`, instale as opcionais ANTES.** Elas entram no pacote se
+> estiverem no venv na hora do build; num executável já gerado, `pip install` não
+> resolve nada. O `--autoverificacao` do `build.bat` imprime quais foram incluídas,
+> justamente para isso não passar despercebido.
 
 ## Gerar o executável
 
@@ -50,9 +58,20 @@ Medido nesta máquina, e não estimado:
 | | one-dir (padrão) | one-file (`umarquivo`) |
 |---|---|---|
 | O que copiar | a **pasta** `dist\TextForge\` inteira | só o `TextForge.exe` |
-| Tamanho | 99 MB em 169 arquivos | **38 MB**, um arquivo |
-| Partida | ~1 s | **~4 a 6 s**, toda vez |
+| Tamanho | 92 MB em 165 arquivos | **38,6 MB**, um arquivo |
+| Partida | **~1,5 a 2,4 s** | ~2,8 a 3,9 s, toda vez |
 | Processos no Gerenciador | 1 | 2 (normal — ver abaixo) |
+
+**Por que o one-file demora mais.** O log registra quanto tempo o programa gasta
+depois que o Python começa (`partida: JANELA NA TELA`). Medido: **0,4 s** no
+one-file e 1,2 s no one-dir. Ou seja, no portátil **2,4 a 3,5 s se passam antes de o
+Python existir** — é o bootloader descompactando 38 MB em `%TEMP%` e o antivírus
+varrendo o que saiu. Não é o programa, é o modo de empacotamento.
+
+**A primeira abertura de todas é a mais lenta** (pode passar de 10 s): o Windows
+Defender faz uma varredura completa de um `.exe` que nunca viu. As seguintes são as
+da tabela. Se isso incomodar, use o one-dir ou adicione a pasta às exclusões do
+Defender.
 
 **No one-dir, o `TextForge.exe` sozinho não funciona.** Ele tem 2,7 MB; os outros
 97 MB estão em `_internal\` (Qt, Python, os recursos). Copiar só o `.exe` produz um

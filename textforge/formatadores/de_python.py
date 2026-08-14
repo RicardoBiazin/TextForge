@@ -34,6 +34,32 @@ def _disponivel() -> bool:
     return True
 
 
+def _como_instalar() -> str:
+    """A instrucao certa para COMO este TextForge esta' rodando.
+
+    Isto importa: num executavel empacotado nao existe `pip` que resolva -- o
+    black precisa estar instalado NA MAQUINA QUE GEROU o .exe, antes do build.
+    Mandar o usuario de um .exe rodar `pip install black` e' um conselho que nao
+    funciona, e ele perde a tarde tentando.
+    """
+    import sys
+
+    if getattr(sys, "frozen", False):
+        return ("Esta e' a versao empacotada (.exe), entao 'pip install' nao "
+                "resolve aqui: o black precisa estar instalado na maquina que "
+                "gera o executavel, ANTES de rodar o build.bat.\n\n"
+                "Quem monta o build:  "
+                ".venv\\Scripts\\python.exe -m pip install -r "
+                "requirements-extras.txt\n"
+                "e depois gera de novo com build.bat.")
+    return ("Instale com:\n\n"
+            "    .venv\\Scripts\\python.exe -m pip install black\n\n"
+            "ou, para todas as opcionais de uma vez:\n\n"
+            "    .venv\\Scripts\\python.exe -m pip install -r "
+            "requirements-extras.txt\n\n"
+            "Depois reabra o TextForge.")
+
+
 def validar(texto: str) -> ErroDeSintaxe | None:
     """Erro de sintaxe com linha, coluna e motivo. Usa `ast.parse`."""
     import ast
@@ -66,9 +92,8 @@ def formatar(texto: str, opcoes: dict) -> Saida:
 
     if not _disponivel():
         return Recusa(
-            "Formatar Python depende do pacote 'black', que nao esta' instalado.",
-            "Instale com: pip install black   (ou "
-            "pip install -r requirements-extras.txt)")
+            "Formatar Python depende do pacote 'black', que nao esta' neste "
+            "TextForge.", _como_instalar())
 
     import black
 

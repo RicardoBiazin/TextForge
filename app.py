@@ -23,6 +23,13 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
+    import time
+    # Marcado o mais cedo possivel. NAO mede a descompactacao do modo um-arquivo
+    # nem a varredura do antivirus, que acontecem ANTES de o Python existir --
+    # justamente por isso a diferenca entre este numero e o cronometro de quem
+    # esta' olhando a tela e' informativa: ela E' o custo do empacotamento.
+    _t0 = time.perf_counter()
+
     from textforge import cli
 
     args = cli.analisar(argv)
@@ -31,16 +38,29 @@ def main(argv: list[str] | None = None) -> int:
     log = log_interno.preparar()
     relatorio_de_erro.instalar()
 
+    def _marca(etapa: str) -> None:
+        """Registra quanto se passou desde o inicio do `main`.
+
+        Existe porque "esta' demorando para abrir" nao se resolve por palpite: com
+        estas marcas no log da' para ver se o tempo esta' no Qt, na sessao
+        restaurada, ou fora do Python (empacotamento e antivirus).
+        """
+        log.info("partida: %-22s %6.2f s", etapa, time.perf_counter() - _t0)
+
+    _marca("log pronto")
+
     for bruto, motivo in args.recusados:
         log.warning("caminho recusado (%s): %s", motivo, bruto)
 
     from textforge import configuracao, instancia_unica
     cfg = configuracao.carregar()
+    _marca("configuracao")
 
     # Os provedores de linguagem sao registrados ANTES da janela: o primeiro
     # documento aberto ja' precisa deles para detectar a linguagem.
     from textforge import linguagens
     log.info("linguagens registradas: %d", linguagens.carregar_embutidos())
+    _marca("linguagens")
 
     if not args.nova_janela and not args.autoverificacao and args.alvos:
         if instancia_unica.enviar_para_instancia_existente(args.como_pedido()):
@@ -59,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication(sys.argv[:1])
     app.setApplicationName("TextForge")
     app.setApplicationVersion(__import__("textforge").VERSAO)
+    _marca("QApplication")
 
     # Fusion, e nao o estilo nativo do Windows. O estilo nativo desenha barra de
     # menu, barra de status e abas com as cores do SISTEMA e ignora boa parte da
@@ -73,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     # anterior. E na autoverificacao do build, nunca.
     janela = JanelaPrincipal(
         cfg, restaurar_sessao=not args.alvos and not args.autoverificacao)
+    _marca("janela montada")
 
     servidor = None
     if not args.nova_janela and not args.autoverificacao:
@@ -80,15 +102,19 @@ def main(argv: list[str] | None = None) -> int:
             lambda pedido: _atender(janela, pedido, log), janela)
         if servidor is not None:
             app.aboutToQuit.connect(servidor.parar)
+    _marca("instancia unica")
 
     if args.autoverificacao:
         return _autoverificar(janela, log)
 
     janela.show()
+    _marca("JANELA NA TELA")
     # Os arquivos da linha de comando sao abertos DEPOIS do show(): assim a
     # janela aparece imediatamente e um arquivo grande nao atrasa a partida.
     for alvo in args.alvos:
         janela.abrir_arquivo(str(alvo.caminho), alvo.linha, alvo.coluna)
+    if args.alvos:
+        _marca("arquivos abertos")
     return app.exec()
 
 
@@ -134,6 +160,18 @@ def _autoverificar(janela, log) -> int:
                   ", ".join(faltando))
         print("FALHA: modulos ausentes no pacote: " + ", ".join(faltando))
         return 1
+
+    # As OPCIONAIS nao reprovam o build -- o programa funciona sem elas --, mas
+    # SAO relatadas. Elas entram no pacote se estiverem no venv na hora do build,
+    # e sem este relatorio isso acontece por acidente: quem empacota numa maquina
+    # sem black distribui um TextForge que nunca formata Python, e so' descobre
+    # pelo usuario reclamando.
+    for nome, recurso in (("black", "formatar Python"),
+                          ("lxml", "XML com CDATA e DOCTYPE")):
+        presente = importlib.util.find_spec(nome) is not None
+        estado = "incluida" if presente else "AUSENTE"
+        log.info("opcional %-6s %-9s (%s)", nome, estado, recurso)
+        print(f"  opcional {nome:<6} {estado:<9} ({recurso})")
 
     janela.show()
     janela.close()

@@ -85,6 +85,26 @@ upx_exclude = [
     "qwindows.dll",
 ]
 
+# DLLs que o PyInstaller traz por dependencia mas que este programa nunca usa. Sao
+# removidas do resultado da analise, e nao pela lista `excludes` -- `excludes` age
+# sobre MODULOS Python, e estas sao bibliotecas nativas.
+#
+# OpenSSL (12,3 MB, e vem DUPLICADO: uma copia do Python e outra do PySide6). Ele
+# so' serve ao TLS do QtNetwork, e aqui o QtNetwork e' usado apenas para
+# QLocalServer/QLocalSocket -- que sao named pipes do Windows, sem nenhuma
+# criptografia envolvida. E o Qt continua com backend de TLS mesmo assim: o
+# `qschannelbackend.dll` usa o Schannel do proprio Windows e fica no pacote.
+#
+# O `opengl32sw.dll` (19,7 MB) NAO esta' nesta lista de proposito. Ele e' o
+# rasterizador de software do Qt, o caminho de contingencia para maquina sem driver
+# de video utilizavel ou sessao por RDP. Remove-lo economizaria mais que tudo o que
+# esta' aqui, mas o modo de falha -- "nao abre no computador de outra pessoa" -- nao
+# e' reproduzivel nesta maquina, e 20 MB nao valem esse risco.
+DLLS_DESNECESSARIAS = (
+    "libcrypto-3.dll", "libcrypto-3-x64.dll",
+    "libssl-3.dll", "libssl-3-x64.dll",
+)
+
 a = Analysis(
     ["app.py"],
     pathex=[str(RAIZ)],
@@ -97,6 +117,12 @@ a = Analysis(
     noarchive=False,
     optimize=1,          # remove asserts; NAO usa 2, que apagaria os docstrings
 )
+_antes = len(a.binaries)
+a.binaries = [b for b in a.binaries
+              if pathlib.Path(b[0]).name.lower() not in
+              {d.lower() for d in DLLS_DESNECESSARIAS}]
+print(f"[TextForge] {_antes - len(a.binaries)} DLL(s) desnecessaria(s) removida(s)")
+
 pyz = PYZ(a.pure)
 
 _icone = RAIZ / "textforge" / "recursos" / "icone.ico"
