@@ -585,7 +585,74 @@ checa_igual(e5.bloco.texto(), "um\ndo",
 checa_igual(e5.bloco.posicao_da_coluna("ab", 99), 2,
             "coluna alem do fim devolve o comprimento da linha")
 
-secao("18f - o bloco some quando deve")
+secao("18f - copiar, recortar e colar o bloco (regressao)")
+
+# ESTE E' O TESTE DO DEFEITO RELATADO: apertar Ctrl para depois apertar C gera um
+# KeyPress do PROPRIO Ctrl antes do C. Numa versao anterior ele caia na regra de
+# "tecla sem semantica de bloco sai do modo", e a selecao sumia no caminho entre o
+# Ctrl e o C -- o Ctrl+C nunca chegava a ter bloco para copiar.
+from PySide6.QtWidgets import QApplication                      # noqa: E402
+
+e8 = novo_editor(LARGURA_FIXA)
+e8.bloco.definir(0, 8, 2, 11)
+for modificador in (Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt):
+    teclar(e8, modificador)
+    checa(e8.bloco.ativa,
+          f"*** apertar {modificador.name} sozinho NAO desfaz a selecao ***")
+
+QApplication.clipboard().setText("<nada>")
+e8.copy()
+checa_igual(QApplication.clipboard().text(), "001\n002\n003",
+            "copy() copia o BLOCO, e nao a selecao normal (vazia)")
+checa(e8.bloco.ativa, "e copiar nao desfaz a selecao")
+
+# Copiar tem de funcionar tambem pelo caminho do QAction: o atalho do menu e'
+# resolvido pelo QShortcutMap ANTES de o evento chegar ao widget, entao tratar
+# so' no keyPressEvent deixaria o menu copiando a selecao vazia.
+QApplication.clipboard().setText("<nada>")
+teclar(e8, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+checa_igual(QApplication.clipboard().text(), "001\n002\n003",
+            "e Ctrl+C pelo teclado da' o mesmo resultado")
+
+e9 = novo_editor(LARGURA_FIXA)
+e9.bloco.definir(0, 8, 2, 11)
+e9.cut()
+checa_igual(QApplication.clipboard().text(), "001\n002\n003",
+            "cut() copia o bloco")
+checa_igual(e9.toPlainText(),
+            "codigo    ativo\ncodigo    ativo\ncodigo    ativo\n",
+            "e apaga a coluna nas tres linhas")
+
+secao("18g - colar sobre um bloco: as tres regras")
+
+e10 = novo_editor(LARGURA_FIXA)
+e10.bloco.definir(0, 8, 2, 11)
+QApplication.clipboard().setText("ZZZ")
+e10.paste()
+checa_igual(e10.toPlainText(),
+            "codigo  ZZZ  ativo\ncodigo  ZZZ  ativo\ncodigo  ZZZ  ativo\n",
+            "1 linha na area de transferencia vai para TODAS as linhas do bloco")
+
+e11 = novo_editor(LARGURA_FIXA)
+e11.bloco.definir(0, 8, 2, 11)
+QApplication.clipboard().setText("AA\nBB\nCC")
+e11.paste()
+checa_igual(e11.toPlainText(),
+            "codigo  AA  ativo\ncodigo  BB  ativo\ncodigo  CC  ativo\n",
+            "*** 3 linhas num bloco de 3 linhas: uma para cada ***")
+e11.undo()
+checa_igual(e11.toPlainText(), LARGURA_FIXA,
+            "e UM Ctrl+Z desfaz o colar em coluna inteiro")
+
+e12 = novo_editor(LARGURA_FIXA)
+e12.bloco.definir(0, 8, 2, 11)
+QApplication.clipboard().setText("AA\nBB")          # 2 linhas num bloco de 3
+e12.paste()
+checa(not e12.bloco.ativa,
+      "contagem que nao bate sai do modo bloco e cola normal "
+      "(inventar uma regra daria resultado imprevisivel)")
+
+secao("18h - o bloco some quando deve")
 
 e6 = novo_editor(LARGURA_FIXA)
 e6.bloco.definir(0, 0, 2, 3)

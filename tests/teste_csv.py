@@ -399,6 +399,29 @@ def testar_integracao() -> None:
     checa_igual(doc.texto(), entrada,
                 "UM Ctrl+Z desfaz a sessao inteira de edicao na tabela")
 
+    secao("Ctrl+C na grade copia as celulas (regressao do roteamento)")
+    from PySide6.QtWidgets import QApplication
+
+    janela.abrir_modo_tabela()
+    vista = aba.view("tabela")
+    vista.tabela.selectAll()
+    QApplication.clipboard().setText("<nada>")
+    janela.vinculos.acionar("editar.copiar")
+    copiado = QApplication.clipboard().text()
+    checa("\t" in copiado,
+          "*** as colunas saem separadas por TAB (e' o que a planilha cola em "
+          "colunas; o ';' cairia tudo numa coluna so') ***")
+    checa_igual(len(copiado.split("\n")), vista.modelo.rowCount(),
+                "e ha' uma linha para cada linha da grade")
+    checa("Ana" in copiado or "99,99" in copiado,
+          f"com o conteudo das celulas: {copiado.splitlines()[:1]}")
+
+    antes = doc.modificado
+    janela.vinculos.acionar("linha.duplicar")
+    checa_igual(doc.modificado, antes,
+                "e um comando de LINHA na grade nao edita o editor escondido")
+    janela.voltar_ao_modo_texto()
+
     secao("Recusa quando nao e' tabela")
     doc2 = Documento.novo(cfg)
     doc2.definir_texto("uma linha de prosa\noutra linha de prosa\n")

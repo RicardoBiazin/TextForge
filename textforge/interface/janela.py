@@ -167,10 +167,56 @@ class JanelaPrincipal(QMainWindow):
             return self.nova_aba().editor
         return aba.editor
 
+    # Comandos de `DIRETO_NO_EDITOR` que fazem sentido numa view SOMENTE LEITURA.
+    # O resto (desfazer, colar, duplicar linha, indentar, marcadores) e' edicao.
+    SO_LEITURA_NA_VIEW = {"copy": "copiar", "selectAll": "selecionar_tudo"}
+
     def _no_editor(self, nome_do_metodo: str) -> None:
-        editor = self.abas.editor_atual()
-        if editor is not None:
-            getattr(editor, nome_do_metodo)()
+        """Executa um metodo do editor -- ou o equivalente da VIEW ATIVA.
+
+        Sem este desvio, os comandos iam sempre para `aba.editor`, mesmo com a
+        aba mostrando o visor de arquivo grande, a tabela do CSV ou o log ao vivo.
+        Os atalhos do menu sao resolvidos pelo QShortcutMap ANTES de o evento
+        chegar ao widget em foco, entao o Ctrl+C do menu nunca chegaria a' view.
+
+        Duas consequencias reais disso, e as duas foram observadas: Ctrl+C num
+        arquivo grande copiava NADA (a selecao do editor escondido, que esta'
+        vazio), e Ctrl+D EDITAVA esse editor escondido -- marcando como modificado
+        um documento que esta' em somente leitura.
+        """
+        aba = self.abas.aba_atual()
+        if aba is None:
+            return
+        view = aba.view_atual()
+        if view == "texto":
+            getattr(aba.editor, nome_do_metodo)()
+            return
+
+        widget = aba.view(view)
+        equivalente = self.SO_LEITURA_NA_VIEW.get(nome_do_metodo)
+        if equivalente is not None:
+            alvo = getattr(widget, "visor", widget)      # o painel embrulha o visor
+            metodo = getattr(alvo, equivalente, None)
+            if metodo is None:
+                # Views que sao (ou contem) um widget de texto do Qt sabem fazer
+                # sozinhas -- e' o caso do log ao vivo e da grade do CSV.
+                metodo = getattr(getattr(widget, "texto", None) or
+                                 getattr(widget, "tabela", None) or widget,
+                                 nome_do_metodo, None)
+            if metodo is not None:
+                metodo()
+                return
+
+        if getattr(widget, "editavel", True):
+            # A tabela do CSV E' editavel, mas nao pelos comandos do editor de
+            # texto: ela tem os proprios botoes de linha e coluna.
+            self.barra.showMessage(
+                "Este comando vale para o modo texto. Volte para o texto para "
+                "usa-lo.", 4000)
+            return
+        self.barra.showMessage(
+            f"{aba.documento.nome} esta' em somente leitura nesta visualizacao.",
+            4000)
 
     # ==================================================================
     # Construcao

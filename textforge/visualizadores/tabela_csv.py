@@ -23,8 +23,9 @@ O parse LAZY resolve a outra metade: abrir um CSV de 200 mil registros analisa a
 from __future__ import annotations
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
-from PySide6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-                               QTableView, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QHeaderView, QLabel,
+                               QLineEdit, QTableView, QToolButton, QVBoxLayout,
+                               QWidget)
 
 from textforge import log_interno
 from textforge.analisadores import de_csv
@@ -401,6 +402,32 @@ class VisualizadorCsv(QWidget):
     def remover_coluna(self) -> None:
         self.modelo.remover_coluna(self._coluna_atual())
         self._ajustar_larguras()
+
+    def copiar(self) -> None:
+        """Copia as celulas selecionadas como TSV (colunas separadas por TAB).
+
+        TAB, e nao o delimitador do arquivo: o destino de um Ctrl+C numa grade e'
+        quase sempre uma planilha, e planilha cola TSV direto em colunas. Usar ";"
+        faria o Excel colar tudo numa coluna so'.
+
+        A ordem e' a da TELA, e nao a do arquivo: se o usuario ordenou por uma
+        coluna, ele espera copiar o que esta' vendo.
+        """
+        indices = self.tabela.selectionModel().selectedIndexes()
+        if not indices:
+            return
+        por_linha: dict[int, dict[int, str]] = {}
+        for indice in indices:
+            por_linha.setdefault(indice.row(), {})[indice.column()] = \
+                str(indice.data() or "")
+        linhas = []
+        for linha in sorted(por_linha):
+            colunas = por_linha[linha]
+            linhas.append("\t".join(colunas[c] for c in sorted(colunas)))
+        QApplication.clipboard().setText("\n".join(linhas))
+
+    def selecionar_tudo(self) -> None:
+        self.tabela.selectAll()
 
     def para_texto(self) -> str:
         return self.modelo.para_texto()

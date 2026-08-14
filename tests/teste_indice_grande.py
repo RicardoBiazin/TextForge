@@ -526,6 +526,33 @@ def testar_janela(caminho: pathlib.Path) -> None:
     checa(aba.documento.somente_leitura,
           "o documento esta' em somente leitura (salvar sera' recusado)")
 
+    secao("Comandos do menu vao para a VIEW ATIVA (regressao)")
+
+    # Os atalhos do menu sao resolvidos pelo QShortcutMap ANTES de o evento chegar
+    # ao widget em foco. Sem desviar por view, `editar.copiar` ia sempre para
+    # `aba.editor` -- que num arquivo grande esta' VAZIO e escondido. Dois efeitos
+    # reais, os dois observados antes da correcao.
+    from PySide6.QtWidgets import QApplication
+
+    visor = janela.visor_grande()
+    visor.definir_bloco(0, 6, 4, 18)
+    QApplication.clipboard().setText("<nada>")
+    janela.vinculos.acionar("editar.copiar")
+    checa_igual(QApplication.clipboard().text().split("\n"),
+                [f"{n:012d}" for n in range(5)],
+                "*** Ctrl+C pelo menu copia o BLOCO DO VISOR, e nao a selecao "
+                "vazia do editor escondido ***")
+
+    antes = aba.documento.modificado
+    janela.vinculos.acionar("linha.duplicar")
+    checa(not aba.documento.modificado and not antes,
+          "*** Ctrl+D no visor NAO edita o documento escondido "
+          "(antes marcava um arquivo somente-leitura como modificado) ***")
+
+    janela.vinculos.acionar("editar.selecionar_tudo")
+    checa(not visor.em_bloco and visor.selecao()[0] == 0,
+          "e Ctrl+A seleciona no visor, nao no editor")
+
     QCoreApplication.processEvents()
     fonte = aba.documento.fonte_grande
     janela.abas.fechar(janela.abas.indexOf(aba))

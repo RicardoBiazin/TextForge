@@ -23,7 +23,8 @@ from PySide6.QtCore import QRect, Qt, Signal
 from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QPainter, QPaintEvent,
                            QPalette, QResizeEvent, QTextBlock, QTextCursor,
                            QTextFormat, QTextOption, QWheelEvent)
-from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
+from PySide6.QtWidgets import (QApplication, QPlainTextEdit, QTextEdit,
+                               QWidget)
 
 from textforge import log_interno
 from textforge.editor import indentacao as ind
@@ -730,6 +731,52 @@ class EditorDeTexto(QPlainTextEdit):
     # Selecao em bloco (Alt+arrastar) -- ver editor/bloco.py
     # ==================================================================
 
+    # -- copiar, recortar e colar CONHECEM o bloco ------------------------
+    #
+    # Sobrescritos aqui, e nao tratados so' no keyPressEvent, porque Ctrl+C chega
+    # por TRES caminhos diferentes: o atalho do QAction do menu (que e' resolvido
+    # pelo QShortcutMap ANTES de o evento chegar ao widget), o item de menu
+    # clicado, e o keyPressEvent. Tratar num lugar so' deixaria os outros dois
+    # copiando a selecao normal -- que, com um bloco ativo, esta' vazia.
+
+    def copy(self) -> None:                                  # noqa: N802 - Qt
+        if self.bloco.ativa and not self.bloco.retangulo.vazio:
+            QApplication.clipboard().setText(self.bloco.texto())
+            return
+        super().copy()
+
+    def cut(self) -> None:                                   # noqa: N802 - Qt
+        if self.bloco.ativa and not self.bloco.retangulo.vazio:
+            QApplication.clipboard().setText(self.bloco.texto())
+            if not self.isReadOnly():
+                self.bloco.substituir("")
+            return
+        super().cut()
+
+    def paste(self) -> None:                                 # noqa: N802 - Qt
+        """Colar sobre um bloco, com tres regras declaradas.
+
+          1 linha na area de transferencia  -> vai para TODAS as linhas do bloco
+          N linhas, e o bloco tem N linhas  -> uma para cada (o "colar em coluna")
+          qualquer outro caso               -> sai do modo bloco e cola normal
+
+        A terceira regra existe porque nao ha' resposta obvia para "colar 3 linhas
+        num bloco de 7", e inventar uma produziria um resultado que o usuario nao
+        consegue prever -- pior que colar do jeito normal, que ele entende.
+        """
+        if not self.bloco.ativa or self.isReadOnly():
+            super().paste()
+            return
+        texto = QApplication.clipboard().text()
+        linhas = texto.split("\n")
+        if len(linhas) == 1:
+            self.bloco.substituir(texto)
+        elif len(linhas) == self.bloco.retangulo.linhas:
+            self.bloco.substituir_por_linha(linhas)
+        else:
+            self.bloco.limpar()
+            super().paste()
+
     def mousePressEvent(self, evento) -> None:               # noqa: N802 - Qt
         if (evento.button() == Qt.MouseButton.LeftButton
                 and evento.modifiers() & Qt.KeyboardModifier.AltModifier):
@@ -763,11 +810,26 @@ class EditorDeTexto(QPlainTextEdit):
             return
         super().mouseReleaseEvent(evento)
 
+    # Teclas que sao SO' modificador. Apertar Ctrl para depois apertar C gera um
+    # KeyPress do proprio Ctrl ANTES do C -- e se ele caisse na regra de "tecla
+    # sem semantica de bloco sai do modo", a selecao sumiria no caminho entre o
+    # Ctrl e o C, e o Ctrl+C nunca teria bloco para copiar. Foi exatamente o que
+    # acontecia.
+    _MODIFICADORES = frozenset({
+        Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt,
+        Qt.Key.Key_AltGr, Qt.Key.Key_Meta, Qt.Key.Key_CapsLock,
+        Qt.Key.Key_NumLock, Qt.Key.Key_ScrollLock, Qt.Key.Key_Super_L,
+        Qt.Key.Key_Super_R, Qt.Key.Key_Menu,
+    })
+
     def _bloco_tratou_tecla(self, evento) -> bool:
         """Teclas que agem sobre a selecao em bloco. False = trata normal."""
         if not self.bloco.ativa:
             return False
         tecla = evento.key()
+        if tecla in self._MODIFICADORES:
+            # Nao trata E nao limpa: um modificador sozinho nao e' uma acao.
+            return False
         mods = evento.modifiers()
         ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
         alt = bool(mods & Qt.KeyboardModifier.AltModifier)
@@ -777,11 +839,14 @@ class EditorDeTexto(QPlainTextEdit):
         if tecla == Qt.Key.Key_Escape:
             self.bloco.limpar()
             return True
-        if ctrl and tecla in (Qt.Key.Key_C, Qt.Key.Key_X):
-            from PySide6.QtWidgets import QApplication
-            QApplication.clipboard().setText(self.bloco.texto())
-            if tecla == Qt.Key.Key_X and not self.isReadOnly():
-                self.bloco.substituir("")
+        if ctrl and tecla == Qt.Key.Key_C:
+            self.copy()
+            return True
+        if ctrl and tecla == Qt.Key.Key_X:
+            self.cut()
+            return True
+        if ctrl and tecla == Qt.Key.Key_V:
+            self.paste()
             return True
 
         # Alt+Shift+setas estende o retangulo pelo teclado, que e' o gesto de quem

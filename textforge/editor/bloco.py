@@ -259,6 +259,38 @@ class SelecaoEmBloco:
         self.definir(self.retangulo.primeira_linha, coluna,
                      self.retangulo.ultima_linha, coluna)
 
+    def substituir_por_linha(self, novas: list[str]) -> None:
+        """Um texto DIFERENTE para cada linha do retangulo -- o "colar em coluna".
+
+        Mesmas regras de `substituir`: tudo num unico passo de desfazer, de baixo
+        para cima, e linha curta completada com espacos ate' a coluna.
+        """
+        if self.retangulo is None:
+            return
+        doc = self._editor.document()
+        faixas = self._faixas()
+        cursor = QTextCursor(doc)
+        cursor.beginEditBlock()
+        try:
+            for indice in range(len(faixas) - 1, -1, -1):
+                numero, inicio, fim = faixas[indice]
+                novo = novas[indice] if indice < len(novas) else ""
+                bloco = doc.findBlockByNumber(numero)
+                if not bloco.isValid():
+                    continue
+                texto = bloco.text()
+                falta = self.retangulo.coluna_inicial - self.coluna_visual(
+                    texto, len(texto))
+                enchimento = " " * falta if falta > 0 and novo else ""
+                cursor.setPosition(bloco.position() + inicio)
+                if fim > inicio:
+                    cursor.setPosition(bloco.position() + fim,
+                                       QTextCursor.MoveMode.KeepAnchor)
+                cursor.insertText(enchimento + novo)
+        finally:
+            cursor.endEditBlock()
+        self.limpar()
+
     def apagar(self) -> None:
         if self.retangulo is None:
             return
