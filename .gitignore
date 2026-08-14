@@ -8,6 +8,7 @@ __pycache__/
 # Saida do PyInstaller. O .exe sai como Release, nunca no historico: sao dezenas
 # de MB por versao e um repositorio nao se recupera de binario grande commitado.
 build/
+build-*/
 dist/
 
 # Dados de execucao do usuario. O lugar oficial e' %APPDATA%\TextForge, mas se
