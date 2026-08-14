@@ -38,6 +38,7 @@ class BarraDeStatus(QStatusBar):
     linguagem_clicada = Signal()
     indentacao_clicada = Signal()
     posicao_clicada = Signal()
+    visualizador_clicado = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -80,6 +81,14 @@ class BarraDeStatus(QStatusBar):
         self._fim_de_linha = _Clicavel("", "Clique para trocar o fim de linha")
         self._fim_de_linha.clicked.connect(self.fim_de_linha_clicado)
         self.addPermanentWidget(self._fim_de_linha)
+
+        # Alternancia Texto <-> Tabela. Fica ESCONDIDO quando o documento nao
+        # oferece outra view: um campo permanentemente inerte na barra e' ruido, e
+        # a maioria dos arquivos so' tem o modo texto.
+        self._visualizador = _Clicavel("", "Clique para alternar a visualizacao")
+        self._visualizador.clicked.connect(self.visualizador_clicado)
+        self._visualizador.hide()
+        self.addPermanentWidget(self._visualizador)
 
         self._linguagem = _Clicavel("", "Clique para trocar a linguagem")
         self._linguagem.clicked.connect(self.linguagem_clicada)
@@ -168,6 +177,22 @@ class BarraDeStatus(QStatusBar):
     def definir_linguagem(self, nome: str) -> None:
         self._linguagem.setText(nome)
 
+    def definir_visualizador(self, atual: str, *, disponivel: bool = True) -> None:
+        """Mostra a view em uso ("Texto" ou "Tabela") e o que o clique fara'.
+
+        `disponivel=False` esconde o campo: o arquivo nao tem outra forma de ser
+        visto, e um botao que nao leva a lugar nenhum e' pior que nenhum botao.
+        """
+        if not disponivel:
+            self._visualizador.hide()
+            return
+        rotulos = {"texto": "Texto", "tabela": "Tabela", "hex": "Hex",
+                   "grande": "Arquivo grande"}
+        outro = "Tabela" if atual == "texto" else "Texto"
+        self._visualizador.setText(rotulos.get(atual, atual.capitalize()))
+        self._visualizador.setToolTip(f"Clique para ver como {outro}")
+        self._visualizador.show()
+
     def definir_indentacao(self, usa_espacos: bool, largura: int) -> None:
         self._indentacao.setText(
             f"{'Espacos' if usa_espacos else 'TAB'}: {largura}")
@@ -206,6 +231,7 @@ class BarraDeStatus(QStatusBar):
         self._indentacao.setText("")
         self._fim_de_linha.setText("")
         self._linguagem.setText("")
+        self._visualizador.hide()
         self._aviso.setText("")
         self.definir_codificacao("")
         self.esconder_progresso()

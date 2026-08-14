@@ -71,7 +71,8 @@ for provedor in REGISTRO.todos():
                 f"{nome}: nenhum quantificador aninhado")
 
     # `dobras()` tem de devolver um modo que o pintor conhece.
-    checa(provedor.dobras().modo in ("indentacao", "delimitadores", "marcadores"),
+    checa(provedor.dobras().modo in ("indentacao", "delimitadores", "marcadores",
+                                     "nenhum"),
           f"{nome}: modo de dobra valido ({provedor.dobras().modo})")
 
     # Os metodos opcionais nao podem estourar com entrada vazia nem estranha.

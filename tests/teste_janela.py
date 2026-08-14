@@ -64,11 +64,14 @@ with appdata_temporario():
     checa(janela.vinculos.tem_tratador("formatar.documento"),
           "'Formatar documento' esta' ligado a partir da etapa 8")
 
+    checa(janela.vinculos.tem_tratador("ferramentas.tabela_csv"),
+          "'Modo tabela (CSV)' esta' ligado a partir da etapa 9")
+
     # Um comando de etapa futura tem de aparecer DESABILITADO, e nao escondido:
     # o usuario ve o que o programa vai ter, e nada clicavel finge funcionar.
-    checa(not janela.vinculos.tem_tratador("ferramentas.tabela_csv"),
-          "'Modo tabela (CSV)' ainda NAO esta' ligado (entra na etapa 9)")
-    qa = janela.vinculos.qacao("ferramentas.tabela_csv")
+    checa(not janela.vinculos.tem_tratador("ferramentas.acompanhar"),
+          "'Acompanhar alteracoes (tail)' ainda NAO esta' ligado (etapa 11)")
+    qa = janela.vinculos.qacao("ferramentas.acompanhar")
     checa(qa is not None and not qa.isEnabled(),
           "e por isso aparece desabilitado, em vez de fingir funcionar")
 

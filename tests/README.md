@@ -44,6 +44,18 @@ Para rodar uma suíte isolada:
 São os casos em que o código *parecia* certo e não estava. Se um destes testes
 quebrar, leia o comentário no código antes de "consertar" o teste.
 
+- **`teste_csv.py`, "para_texto() sem edição devolve a entrada IDÊNTICA".** É o
+  teste central da etapa 9. Regenerar o CSV com `csv.writer` altera o arquivo
+  **mesmo sem nenhuma edição**: o `QUOTE_MINIMAL` transforma `"Ana"` em `Ana`, o
+  espaço depois do delimitador some e um número citado deixa de ser citado. Num
+  arquivo de integração isso é destruição silenciosa e torna qualquer `fc /b`
+  inútil. Se este teste quebrar, o `ModeloCsv` voltou a reconstruir linhas que
+  ninguém editou — o `registros_crus`/`sujas` existe exatamente para impedir isso.
+- **`teste_csv.py`, "Registro não é linha".** Um campo entre aspas pode conter
+  `\n`. Dividir o CSV por linha parte o registro ao meio e desloca a tabela
+  inteira dali para a frente. `dividir_registros` varre respeitando as aspas, e a
+  junção com `\n` reconstrói o texto exato — é o que sustenta o teste acima.
+
 - **`teste_instancia_unica.py`, seção 4.** Neste Qt (6.11 no Windows), destruir um
   `QLocalSocket` antes de os bytes drenarem **descarta os bytes**, e
   `bytesToWrite()` / `flush()` / `waitForBytesWritten()` não são confiáveis para

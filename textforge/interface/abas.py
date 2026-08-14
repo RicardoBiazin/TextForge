@@ -78,8 +78,32 @@ class Aba(QWidget):
             menu.exec(self.editor.viewport().mapToGlobal(ponto))
 
     def registrar_view(self, nome: str, widget: QWidget) -> None:
+        self.remover_view(nome)
         self._views[nome] = widget
         self.pilha.addWidget(widget)
+
+    def remover_view(self, nome: str) -> None:
+        """Descarta uma view alternativa. "texto" nunca sai.
+
+        A tabela do CSV e' DESCARTADA ao voltar para o texto, e nao guardada: o
+        usuario pode editar o texto em seguida, e uma tabela viva com o conteudo
+        antigo mostraria dados obsoletos na proxima troca de modo -- ou pior,
+        escreveria o conteudo antigo de volta por cima do novo.
+        """
+        if nome == "texto":
+            return
+        widget = self._views.pop(nome, None)
+        if widget is None:
+            return
+        self.pilha.removeWidget(widget)
+        widget.setParent(None)
+        widget.deleteLater()
+
+    def tem_view(self, nome: str) -> bool:
+        return nome in self._views
+
+    def view(self, nome: str) -> QWidget | None:
+        return self._views.get(nome)
 
     def trocar_para(self, nome: str) -> bool:
         widget = self._views.get(nome)
@@ -99,6 +123,9 @@ class Aba(QWidget):
     def aplicar_tema(self, tema) -> None:
         self.editor.aplicar_tema(tema)
         self.pintor.definir_tema(tema)
+        for nome, widget in self._views.items():
+            if nome != "texto" and hasattr(widget, "aplicar_tema"):
+                widget.aplicar_tema(tema)
 
     def aplicar_configuracao(self, cfg: dict) -> None:
         self.cfg = cfg

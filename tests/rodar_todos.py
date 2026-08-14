@@ -58,6 +58,9 @@ SUITES = [
     # etapa 8 -- formatadores e seguranca
     ("teste_seguranca.py", "XXE, billion laughs, varredura estatica do fonte"),
     ("teste_formatadores.py", "XML/JSON/SQL/CSS/HTML/Python: fidelidade"),
+
+    # etapa 9 -- CSV
+    ("teste_csv.py", "dialeto, registros multi-linha, tabela sem perder quoting"),
 ]
 
 

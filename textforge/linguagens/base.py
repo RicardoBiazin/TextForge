@@ -38,6 +38,9 @@ class RegraDeDobra:
 
     "indentacao"     Python, YAML: a regiao vai ate' a linha com indentacao menor.
     "delimitadores"  C, JSON, CSS: a regiao vai da abertura ao fechamento.
+    "nenhum"         CSV: o formato nao tem hierarquia. Dobrar por indentacao
+                     acharia regiao onde nao ha' nenhuma, so' porque um campo
+                     comeca com espaco.
     """
 
     modo: str = "indentacao"

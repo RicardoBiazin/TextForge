@@ -129,6 +129,7 @@ class JanelaPrincipal(QMainWindow):
         self._montar_menu_de_recentes()
         self._montar_menu_de_linguagens()
         self.barra.linguagem_clicada.connect(self.escolher_linguagem)
+        self.barra.visualizador_clicado.connect(self.alternar_modo_tabela)
 
         self.aplicar_tema(self.tema)
         self.ferramentas.setVisible(
@@ -230,6 +231,9 @@ class JanelaPrincipal(QMainWindow):
             "formatar.ir_para_erro": self.ir_para_erro,
             "formatar.ordenar_chaves": self.formatar_ordenando,
             "exibir.painel_problemas": self.alternar_painel_problemas,
+
+            # -- visualizadores (requisito 6, item CSV) -----------------------
+            "ferramentas.tabela_csv": self.alternar_modo_tabela,
 
             # -- busca (requisito 8) -----------------------------------------
             "buscar.localizar": lambda: self.abrir_busca(),
@@ -522,6 +526,9 @@ class JanelaPrincipal(QMainWindow):
     def _pode_fechar_aba(self, aba: Aba) -> bool:
         """Pergunta antes de perder alteracoes de UMA aba."""
         doc = aba.documento
+        # Celulas editadas na grade e nunca aplicadas ao texto: sem isto, a aba
+        # fecharia sem sequer PERGUNTAR, porque o documento nao esta' modificado.
+        self._sincronizar_visualizador(aba)
         if not doc.modificado:
             self._desmontar(doc)
             return True
@@ -612,6 +619,9 @@ class JanelaPrincipal(QMainWindow):
         doc = self.abas.documento_atual()
         if doc is None:
             return False
+        # Salvar com a grade aberta grava o que esta' na GRADE. Sem isto, editar
+        # celulas e apertar Ctrl+S gravaria o texto de antes das edicoes.
+        self._sincronizar_visualizador()
         if doc.caminho is None:
             return self.salvar_como()
         if doc.somente_leitura:
@@ -820,7 +830,137 @@ class JanelaPrincipal(QMainWindow):
                                       doc.indentacao.largura)
         self.barra.definir_linguagem(doc.nome_da_linguagem)
         self.barra.definir_aviso(doc.aviso)
+        aba = self.abas.aba_atual()
+        self.barra.definir_visualizador(
+            aba.view_atual() if aba else "texto",
+            disponivel=self._oferece_tabela(aba))
         self._atualizar_titulo()
+
+    # ==================================================================
+    # Modo tabela do CSV (requisito 6, item CSV)
+    # ==================================================================
+
+    def _oferece_tabela(self, aba: Aba | None) -> bool:
+        """Mostrar a alternancia Texto <-> Tabela na barra de status?
+
+        A resposta vem do PROVEDOR (`visualizador_preferido()`), e nao de uma
+        analise do conteudo. `_mostrar_metadados` roda em toda troca de aba, todo
+        salvamento e toda mudanca de codificacao; farejar o texto ali custaria uma
+        varredura do documento inteiro a cada uma dessas vezes, para responder algo
+        que a extensao ja' responde.
+
+        O `.dat` tabular, que nao tem provedor de CSV, continua atendido: o item
+        "Modo tabela (CSV)" do menu Ferramentas esta' sempre ativo e faz a deteccao
+        na hora -- pagando o custo uma vez, quando o usuario pediu.
+        """
+        if aba is None:
+            return False
+        if aba.view_atual() == "tabela":
+            return True
+        provedor = aba.documento.provedor
+        return (provedor is not None
+                and provedor.visualizador_preferido() == "tabela")
+
+    def alternar_modo_tabela(self) -> None:
+        aba = self.abas.aba_atual()
+        if aba is None:
+            return
+        if aba.view_atual() == "tabela":
+            self.voltar_ao_modo_texto()
+        else:
+            self.abrir_modo_tabela()
+
+    def abrir_modo_tabela(self) -> bool:
+        from textforge.analisadores import de_csv
+        from textforge.visualizadores.tabela_csv import VisualizadorCsv
+
+        aba = self.abas.aba_atual()
+        if aba is None:
+            return False
+        texto = aba.documento.texto()
+        dialeto = de_csv.detectar(texto)
+        if dialeto.colunas < 2:
+            dialogos.avisar(
+                self, "Este arquivo nao parece uma tabela.",
+                "O TextForge nao encontrou um delimitador consistente "
+                f"({dialeto.como_decidiu}). O modo tabela precisa de pelo menos "
+                "duas colunas separadas por ; , TAB | ou dois-pontos.")
+            return False
+
+        # A tabela e' construida do texto ATUAL e descartada ao voltar. Guardar a
+        # tabela entre trocas de modo faria a proxima abertura mostrar o conteudo
+        # de antes das edicoes feitas em modo texto.
+        vista = VisualizadorCsv(texto, dialeto, aba)
+        vista.voltar_para_texto.connect(self.voltar_ao_modo_texto)
+        if aba.documento.somente_leitura:
+            from PySide6.QtWidgets import QAbstractItemView
+            vista.tabela.setEditTriggers(
+                QAbstractItemView.EditTrigger.NoEditTriggers)
+        vista.aplicar_tema(self.tema)
+        aba.registrar_view("tabela", vista)
+        aba.trocar_para("tabela")
+        self.barra.showMessage(f"Modo tabela — {dialeto.descrever()}", 5000)
+        self._mostrar_metadados()
+        return True
+
+    def voltar_ao_modo_texto(self) -> bool:
+        """Aplica o que foi editado na grade e volta ao editor.
+
+        A escrita de volta e' UM `QTextCursor` com `beginEditBlock`: desfazer uma
+        sessao inteira de edicao na tabela e' um Ctrl+Z so'. E se nada foi
+        editado, NADA e' escrito -- o documento nao fica marcado como modificado
+        por ter sido apenas OLHADO em outra forma.
+        """
+        from PySide6.QtGui import QTextCursor
+
+        aba = self.abas.aba_atual()
+        if aba is None or aba.view_atual() != "tabela":
+            return False
+        vista = aba.view("tabela")
+        editor = aba.editor
+
+        if vista is not None and vista.alterado:
+            if aba.documento.somente_leitura:
+                dialogos.avisar(self, "Este documento esta' em somente leitura.",
+                                aba.documento.aviso)
+            else:
+                cursor = QTextCursor(editor.document())
+                cursor.select(QTextCursor.SelectionType.Document)
+                cursor.beginEditBlock()
+                try:
+                    cursor.insertText(vista.para_texto())
+                finally:
+                    cursor.endEditBlock()
+                self.barra.showMessage("Alteracoes da tabela aplicadas", 3000)
+
+        aba.trocar_para("texto")
+        aba.remover_view("tabela")
+        self._mostrar_metadados()
+        return True
+
+    def _sincronizar_visualizador(self, aba: Aba | None = None) -> None:
+        """Traz para o documento o que estiver pendente numa view alternativa.
+
+        Chamado antes de salvar e antes de fechar: o requisito e' que a
+        sincronizacao aconteca em ATO DO USUARIO (troca de modo, salvar, fechar) e
+        nao a cada tecla digitada na grade -- reconstruir um CSV de 200 mil
+        registros por tecla e' inviavel.
+        """
+        aba = aba if aba is not None else self.abas.aba_atual()
+        if aba is None or aba.view_atual() != "tabela":
+            return
+        vista = aba.view("tabela")
+        if vista is None or not vista.alterado:
+            return
+        from PySide6.QtGui import QTextCursor
+        cursor = QTextCursor(aba.editor.document())
+        cursor.select(QTextCursor.SelectionType.Document)
+        cursor.beginEditBlock()
+        try:
+            cursor.insertText(vista.para_texto())
+        finally:
+            cursor.endEditBlock()
+        vista.modelo.confirmar_gravacao()
 
     # ==================================================================
     # Formatadores (requisito 6)
