@@ -132,6 +132,7 @@ class JanelaPrincipal(QMainWindow):
         self._montar_menu_de_linguagens()
         self.barra.linguagem_clicada.connect(self.escolher_linguagem)
         self.barra.visualizador_clicado.connect(self.alternar_modo_tabela)
+        self.barra.credito_clicado.connect(self.mostrar_sobre)
 
         self.aplicar_tema(self.tema)
         self.ferramentas.setVisible(
@@ -2473,14 +2474,42 @@ class JanelaPrincipal(QMainWindow):
     # ==================================================================
 
     def mostrar_sobre(self) -> None:
+        """As versoes sao LIDAS em tempo de execucao, e nao escritas a mao.
+
+        Um numero de versao de biblioteca escrito no fonte fica errado na primeira
+        atualizacao, e e' justamente esta tela que alguem consulta ao relatar um
+        problema -- ela nao pode ser a fonte da informacao errada.
+        """
+        import platform
+        import sys
+
+        from PySide6 import __version__ as versao_pyside
+        from PySide6.QtCore import qVersion
+
+        opcionais = []
+        for nome, para_que in (("lxml", "XML fiel"), ("black", "formatar Python"),
+                               ("sqlparse", "formatar SQL"),
+                               ("charset_normalizer", "detectar codificacao")):
+            try:
+                __import__(nome)
+                opcionais.append(f"{nome} ({para_que})")
+            except ImportError:
+                opcionais.append(f"<i>{nome} ausente — {para_que} desligado</i>")
+
         QMessageBox.about(
             self, f"Sobre o {APP}",
             f"<h3>{APP} {VERSAO}</h3>"
             f"<p>Editor de arquivos tecnicos: texto, codigo-fonte, "
             f"configuracao e dados.</p>"
-            f"<p>Nao executa o conteudo dos arquivos que abre.</p>"
-            f"<p>{AUTOR} &middot; licenca MIT<br>"
-            f"Interface em PySide6 (Qt for Python), LGPLv3.</p>")
+            f"<p><b>Nao executa o conteudo dos arquivos que abre.</b></p>"
+            f"<p>Desenvolvido por <b>{AUTOR}</b> &middot; licenca MIT</p>"
+            f"<p style='color:gray'>"
+            f"Python {sys.version.split()[0]} &middot; "
+            f"PySide6 {versao_pyside} &middot; Qt {qVersion()}<br>"
+            f"{platform.system()} {platform.release()}<br>"
+            f"{'<br>'.join(opcionais)}</p>"
+            f"<p style='color:gray'>Interface em PySide6 (Qt for Python), "
+            f"LGPLv3.</p>")
 
     def abrir_log(self) -> None:
         caminho = configuracao.caminho_log()

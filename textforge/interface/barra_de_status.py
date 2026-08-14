@@ -16,6 +16,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QLabel, QProgressBar, QPushButton, QSizePolicy,
                                QStatusBar, QWidget)
 
+from textforge import APP, AUTOR, VERSAO
+
 
 class _Clicavel(QPushButton):
     """Rotulo que parece texto e responde a clique."""
@@ -39,6 +41,7 @@ class BarraDeStatus(QStatusBar):
     indentacao_clicada = Signal()
     posicao_clicada = Signal()
     visualizador_clicado = Signal()
+    credito_clicado = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -98,6 +101,20 @@ class BarraDeStatus(QStatusBar):
         self._insercao.setToolTip("INS = inserir, OVR = sobrescrever (tecla Insert)")
         self.addPermanentWidget(self._insercao)
 
+        # Versao e autor, no canto direito. `addPermanentWidget`, e nao
+        # `addWidget`: a area dos widgets NAO permanentes e' a mesma onde o
+        # `showMessage()` desenha, e um credito ali seria coberto (ou empurrado)
+        # a cada "Salvo: arquivo.txt". MEDIDO nesta versao do Qt: o permanente
+        # fica na metade direita e nao se move nem se esconde quando ha' mensagem.
+        # Clicavel porque ja' existe onde levar -- o dialogo Sobre.
+        self._credito = _Clicavel(
+            f"v{VERSAO} · {AUTOR}",
+            f"{APP} {VERSAO} — desenvolvido por {AUTOR}.\n"
+            f"Clique para ver a licenca e as versoes.")
+        self._credito.setObjectName("creditoDaBarra")
+        self._credito.clicked.connect(self.credito_clicado)
+        self.addPermanentWidget(self._credito)
+
         self.limpar()
 
     # -- tema --------------------------------------------------------------
@@ -125,6 +142,10 @@ class BarraDeStatus(QStatusBar):
                 background: transparent;
             }}
             QStatusBar QPushButton:hover {{ background: {realce}; }}
+            QStatusBar QPushButton#creditoDaBarra {{ color: {apagado}; }}
+            QStatusBar QPushButton#creditoDaBarra:hover {{
+                color: {texto}; background: {realce};
+            }}
         """)
         # Reaplica o destaque de codificacao suspeita, que tem cor propria.
         self.definir_codificacao(self._codificacao.text(),
@@ -225,6 +246,9 @@ class BarraDeStatus(QStatusBar):
 
         Mostrar "Ln 1, Col 1 | UTF-8 | CRLF" sem documento aberto seria informar
         algo que nao existe.
+
+        O CREDITO NAO E' LIMPO aqui: ele nao e' estado do documento. Limpa-lo
+        faria a versao desaparecer ao fechar a ultima aba, o que pareceria defeito.
         """
         self._posicao.setText("")
         self._selecao.setText("")

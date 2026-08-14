@@ -202,6 +202,53 @@ with appdata_temporario():
                 "a paleta vai para a QApplication (senao os dialogos nao seguem)")
 
     # ---------------------------------------------------------------------
+    secao("6a - versao e autor no rodape")
+
+    from textforge import APP, AUTOR, VERSAO                     # noqa: E402
+
+    credito = janela.barra._credito
+    checa(VERSAO in credito.text(), f"a versao aparece no rodape: {credito.text()!r}")
+    checa(AUTOR in credito.text(), "e o autor tambem")
+    checa(APP in credito.toolTip() and "desenvolvido por" in credito.toolTip(),
+          "a dica traz o nome do programa e o 'desenvolvido por'")
+
+    # PERMANENTE, e nao um `addWidget` comum: o Qt ESCONDE os widgets nao
+    # permanentes a cada `showMessage()`, e um credito que pisca a cada
+    # salvamento pareceria defeito.
+    #
+    # O que se verifica e' a POSICAO, e nao `isVisible()`: numa janela que nunca
+    # foi exibida, `isVisible()` e' False para todo filho, e o teste passaria (ou
+    # falharia) por um motivo que nao tem nada a ver com o que se quer provar.
+    #
+    # E nao se verifica `isHidden()` tampouco: MEDIDO nesta versao do Qt, o
+    # `showMessage()` NAO esconde os widgets nao permanentes -- ele desenha a
+    # mensagem sobre a area deles. A garantia real e' o credito estar na area
+    # PERMANENTE, a' direita, longe de onde a mensagem e' desenhada.
+    janela.show()
+    from PySide6.QtWidgets import QApplication as _QApp            # noqa: E402
+    _QApp.processEvents()
+    x_da_mensagem = janela.barra._aviso.x()
+    x_do_credito = credito.x()
+    checa(x_do_credito > x_da_mensagem,
+          f"o credito fica na area PERMANENTE, a' direita (x={x_do_credito}) e "
+          f"nao onde a mensagem e' desenhada (x={x_da_mensagem})")
+
+    janela.barra.showMessage("uma mensagem temporaria bem longa", 5000)
+    _QApp.processEvents()
+    checa(not credito.isHidden() and credito.x() == x_do_credito,
+          "*** e uma mensagem temporaria nao o esconde nem o desloca ***")
+    janela.barra.clearMessage()
+
+    # E nao e' estado do documento: fechar a ultima aba nao pode apaga-lo.
+    janela.barra.limpar()
+    checa(VERSAO in credito.text(),
+          "*** e sobrevive ao limpar() (nao e' estado do documento) ***")
+    janela._mostrar_metadados()
+
+    checa(janela.vinculos.tem_tratador("ajuda.sobre"),
+          "clicar no credito leva ao dialogo Sobre, que ja' existia")
+
+    # ---------------------------------------------------------------------
     secao("6b - os menus da barra continuam VIVOS (regressao)")
 
     # Esta secao guarda um defeito real, encontrado no .exe empacotado:
