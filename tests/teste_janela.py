@@ -202,6 +202,82 @@ with appdata_temporario():
                 "a paleta vai para a QApplication (senao os dialogos nao seguem)")
 
     # ---------------------------------------------------------------------
+    secao("6b - os menus da barra continuam VIVOS (regressao)")
+
+    # Esta secao guarda um defeito real, encontrado no .exe empacotado:
+    # `QAction.menu()` devolve um QMenu cujo tempo de vida fica atrelado ao
+    # wrapper Python do QAction. Assim que a funcao que iterou
+    # `menuBar().actions()` retorna, o wrapper e' coletado e o shiboken DESTROI o
+    # objeto C++ do menu -- a barra fica com um ponteiro pendurado, e abrir o menu
+    # levanta "Internal C++ object (QMenu) already deleted".
+    #
+    # `gc.collect()` e' o que torna o teste deterministico: sem ele, o defeito so'
+    # apareceria quando o coletor resolvesse rodar.
+    #
+    # E NOTE: a checagem abaixo NAO chama `acao.menu()`. Uma versao anterior deste
+    # teste chamava, e com isso CAUSAVA o proprio defeito que pretendia detectar --
+    # o menu morria na verificacao. `acao.menu()` e' veneno em qualquer contexto,
+    # e a varredura estatica logo adiante e' o que impede alguem de reintroduzi-lo.
+    import gc                                                    # noqa: E402
+    from textforge.interface import acoes as amod                # noqa: E402
+    gc.collect()
+
+    mortos = []
+    for grupo in amod.ORDEM_DOS_MENUS:
+        alvo = janela.vinculos.menu(grupo)
+        if alvo is None:
+            continue
+        try:
+            len(alvo.actions())
+        except RuntimeError:
+            mortos.append(grupo)
+    checa_igual(mortos, [],
+                "nenhum menu da barra foi destruido apos a construcao")
+
+    checa(janela.vinculos.menu("Linguagem") is not None,
+          "vinculos.menu() acha o menu por grupo (sem passar por QAction.menu())")
+    checa(janela.vinculos.menu("Inexistente") is None,
+          "e devolve None para um grupo que nao existe")
+
+    # Abrir o menu de Linguagem duas vezes: e' o caminho exato que estourava.
+    janela._menu_linguagem.aboutToShow.emit()
+    quantos = len(janela._menu_linguagem.actions())
+    checa(quantos > 20,
+          f"*** abrir o menu Linguagem preenche os provedores ({quantos} itens) ***")
+    gc.collect()
+    janela._menu_linguagem.aboutToShow.emit()
+    checa_igual(len(janela._menu_linguagem.actions()), quantos,
+                "e abrir de novo (apos um gc) da' o mesmo, sem estourar")
+
+    janela._menu_recentes.aboutToShow.emit()
+    checa(len(janela._menu_recentes.actions()) >= 1,
+          "o menu de recentes tambem sobrevive e se preenche")
+
+    # Varredura estatica: `QAction.menu()` nao pode voltar ao codigo. Ela olha a
+    # ARVORE, e nao o texto, para os comentarios que CITAM o problema (inclusive
+    # os deste arquivo) nao serem acusados como se fossem o problema.
+    import ast                                                   # noqa: E402
+    import pathlib                                               # noqa: E402
+    from ajudantes import RAIZ                                   # noqa: E402
+
+    culpados: list[str] = []
+    for arquivo in list((RAIZ / "textforge").rglob("*.py")) + \
+            list((RAIZ / "tests").glob("*.py")):
+        fonte = arquivo.read_text(encoding="utf-8", errors="replace")
+        for no in ast.walk(ast.parse(fonte)):
+            # `x.menu()` sem argumento. `self.vinculos.menu("Arquivo")` tem
+            # argumento e e' justamente a forma CERTA, entao nao entra aqui.
+            if (isinstance(no, ast.Call)
+                    and isinstance(no.func, ast.Attribute)
+                    and no.func.attr == "menu"
+                    and not no.args and not no.keywords):
+                culpados.append(
+                    f"{pathlib.Path(arquivo).name}:{no.lineno}")
+    checa_igual(culpados, [],
+                "*** ninguem chama `acao.menu()`: ele DESTROI o QMenu quando o "
+                "wrapper do QAction e' coletado ***")
+
+    # ---------------------------------------------------------------------
     secao("7 - fechar pergunta antes de perder alteracoes")
 
     # Fechar com alteracoes pendentes ABRE UM DIALOGO MODAL, e em modo offscreen

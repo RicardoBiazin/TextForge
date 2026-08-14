@@ -323,17 +323,11 @@ class JanelaPrincipal(QMainWindow):
         atual com a marca de selecao -- e para um plugin que registre uma
         linguagem em tempo de execucao aparecer sem reiniciar o programa.
         """
-        menu = self._menu_da_barra("Linguagem")
+        menu = self.vinculos.menu("Linguagem")
         if menu is None:
             return
         self._menu_linguagem = menu
         menu.aboutToShow.connect(self._preencher_linguagens)
-
-    def _menu_da_barra(self, titulo: str):
-        for acao in self.menuBar().actions():
-            if acao.text().replace("&", "") == titulo:
-                return acao.menu()
-        return None
 
     def _preencher_linguagens(self) -> None:
         from textforge.linguagens import REGISTRO
@@ -408,11 +402,7 @@ class JanelaPrincipal(QMainWindow):
         Reconstruir na hora, em vez de manter sincronizado, e' o que garante que a
         lista nunca fique desatualizada em relacao ao config.
         """
-        menu_arquivo = None
-        for acao in self.menuBar().actions():
-            if acao.text().replace("&", "") == "Arquivo":
-                menu_arquivo = acao.menu()
-                break
+        menu_arquivo = self.vinculos.menu("Arquivo")
         if menu_arquivo is None:
             return
         self._menu_recentes = menu_arquivo.addMenu("Arquivos &recentes")

@@ -31,6 +31,18 @@ class Vinculos:
         self._janela = janela
         self._tratadores: dict[str, Tratador] = {}
         self._qacoes: dict[str, QAction] = {}
+        # Grupo -> QMenu da barra. GUARDAR ESTA REFERENCIA E' OBRIGATORIO, e nao
+        # comodidade: no PySide6, `QAction.menu()` devolve um QMenu cujo tempo de
+        # vida fica atrelado ao wrapper Python do QAction. Quando esse wrapper e'
+        # coletado -- o que acontece assim que a funcao que iterou
+        # `menuBar().actions()` retorna --, o shiboken DESTROI O OBJETO C++ do
+        # menu, e a barra fica com um ponteiro pendurado. O sintoma e' um
+        # "Internal C++ object (QMenu) already deleted" ao abrir o menu, e o
+        # problema por baixo e' uso de memoria liberada.
+        #
+        # Mantendo aqui a referencia criada por `addMenu`, o wrapper vive enquanto
+        # a janela viver, e ninguem precisa buscar o menu pela barra.
+        self._menus: dict[str, QMenu] = {}
         self._conflitos_avisados = False
 
     # -- registro de tratadores --------------------------------------------
@@ -102,12 +114,23 @@ class Vinculos:
                 log.error("ATALHOS EM CONFLITO: %r", conflitos)
 
         barra.clear()
+        self._menus.clear()
         for grupo in acoes.ORDEM_DOS_MENUS:
             comandos = REGISTRO.do_grupo(grupo)
             if not comandos:
                 continue
             menu = barra.addMenu("&" + grupo if "&" not in grupo else grupo)
+            self._menus[grupo] = menu
             self._preencher(menu, comandos)
+
+    def menu(self, grupo: str) -> QMenu | None:
+        """O QMenu de um grupo da barra ("Arquivo", "Linguagem"...).
+
+        Use SEMPRE isto para chegar num menu da barra. Procurar em
+        `menuBar().actions()` e chamar `acao.menu()` destroi o menu -- ver o
+        comentario de `self._menus` no construtor.
+        """
+        return self._menus.get(grupo)
 
     def _preencher(self, menu: QMenu, comandos: list[Comando]) -> None:
         submenus: dict[str, QMenu] = {}
