@@ -9,10 +9,17 @@ para ninguem "corrigir" a diferenca depois.
 
 Dois modos, escolhidos pela variavel de ambiente TEXTFORGE_UM_ARQUIVO:
 
-  vazia  ONE-DIR (padrao)  ~110-150 MB, parte em ~0,5 s
-  "1"    ONE-FILE          ~55-75 MB, descompacta ~70 MB em %TEMP% a cada
-                           abertura (1,5 a 4 s). Bom para pendrive, ruim para
-                           um editor aberto dezenas de vezes por dia.
+  vazia  ONE-DIR (padrao)  a PASTA dist\TextForge inteira, 99 MB em 169 arquivos.
+                           O TextForge.exe tem 2,7 MB e NAO funciona sozinho -- o
+                           resto esta' em _internal\. Parte em ~1 s.
+  "1"    ONE-FILE          UM arquivo de 38 MB que funciona sozinho, mas
+                           descompacta em %TEMP% a CADA abertura: ~4 a 6 s de
+                           partida. Bom para pendrive, ruim para um editor aberto
+                           dezenas de vezes por dia.
+
+Os numeros acima foram MEDIDOS nesta maquina, e nao estimados. O one-file tambem
+aparece como DOIS processos no Gerenciador de Tarefas (o bootloader que descompacta
+e o programa de verdade) -- e' normal do PyInstaller, e nao um segundo TextForge.
 """
 
 import os

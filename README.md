@@ -39,16 +39,35 @@ recusado em vez de corrompido). `black` liga o formatador de Python.
 ## Gerar o executável
 
 ```bat
-build.bat              :: dist\TextForge\TextForge.exe   (one-dir, recomendado)
-build.bat umarquivo    :: dist\TextForge.exe             (portátil)
+build.bat              :: dist\TextForge\    (one-dir, recomendado)
+build.bat umarquivo    :: dist\TextForge.exe (portátil, um arquivo só)
 ```
+
+### Qual dos dois copiar
+
+Medido nesta máquina, e não estimado:
+
+| | one-dir (padrão) | one-file (`umarquivo`) |
+|---|---|---|
+| O que copiar | a **pasta** `dist\TextForge\` inteira | só o `TextForge.exe` |
+| Tamanho | 99 MB em 169 arquivos | **38 MB**, um arquivo |
+| Partida | ~1 s | **~4 a 6 s**, toda vez |
+| Processos no Gerenciador | 1 | 2 (normal — ver abaixo) |
+
+**No one-dir, o `TextForge.exe` sozinho não funciona.** Ele tem 2,7 MB; os outros
+97 MB estão em `_internal\` (Qt, Python, os recursos). Copiar só o `.exe` produz um
+erro do Windows na abertura — foi verificado.
+
+**No one-file**, o `.exe` basta. O preço é que ele descompacta ~38 MB em `%TEMP%` **a
+cada abertura**, o que custa 4 a 6 s de partida — num editor aberto dezenas de vezes
+por dia isso incomoda. E ele aparece como **dois** processos no Gerenciador de
+Tarefas: o bootloader que descompacta e o programa de verdade. É normal do
+PyInstaller, não são duas instâncias — o que importa para a instância única é que
+abrir um segundo arquivo não crie um segundo *par*.
 
 O `build.bat` roda a suíte **antes** de empacotar e uma fumaça do `.exe` **depois**
 (`TextForge.exe --autoverificacao`). Excludes agressivos quebram o programa só em
 tempo de execução; sem a fumaça, isso chegaria como relatório de bug do usuário.
-
-O modo portátil descompacta ~70 MB em `%TEMP%` **a cada abertura** — 1,5 a 4 s de
-partida. Bom para pendrive, ruim para uso diário.
 
 ## Registrar em "Abrir com"
 
