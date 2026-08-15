@@ -58,27 +58,40 @@ Medido nesta máquina, e não estimado:
 | | one-dir (padrão) | one-file (`umarquivo`) |
 |---|---|---|
 | O que copiar | a **pasta** `dist\TextForge\` inteira | só o `TextForge.exe` |
-| Tamanho | 92 MB em 165 arquivos | **38,6 MB**, um arquivo |
-| Partida | **~1,5 a 2,4 s** | ~2,8 a 3,9 s, toda vez |
+| Tamanho | 79 MB em 226 arquivos | **35 MB**, um arquivo |
+| Partida (mediana) | **~1,3 s** | ~1,7 s |
 | Processos no Gerenciador | 1 | 2 (normal — ver abaixo) |
 
 **Por que o one-file demora mais.** O log registra quanto tempo o programa gasta
-depois que o Python começa (`partida: JANELA NA TELA`). Medido: **0,4 s** no
-one-file e 1,2 s no one-dir. Ou seja, no portátil **2,4 a 3,5 s se passam antes de o
-Python existir** — é o bootloader descompactando 38 MB em `%TEMP%` e o antivírus
-varrendo o que saiu. Não é o programa, é o modo de empacotamento.
+depois que o Python começa (`partida: JANELA NA TELA`). Medido: **0,6 s** no
+one-file e 1,0 s no one-dir. Ou seja, no portátil cerca de **1 s se passa antes de o
+Python existir** — é o bootloader descompactando em `%TEMP%` e o antivírus varrendo
+o que saiu. Não é o programa, é o modo de empacotamento, e o tempo é proporcional ao
+tamanho: o pacote encolheu de 43 para 35 MB e a partida caiu de ~5,7 s para ~1,7 s.
 
-**A primeira abertura de todas é a mais lenta** (pode passar de 10 s): o Windows
-Defender faz uma varredura completa de um `.exe` que nunca viu. As seguintes são as
-da tabela. Se isso incomodar, use o one-dir ou adicione a pasta às exclusões do
-Defender.
+**A primeira abertura de um `.exe` recém-gerado é sempre a mais lenta** (chegou a
+passar de 10 s aqui): o Windows Defender faz uma varredura completa de um arquivo que
+nunca viu. As seguintes são as da tabela. Se isso incomodar, adicione a pasta às
+exclusões do Defender.
+
+**O que foi removido do pacote, e por quê.** O `.spec` descarta 32 MB de DLLs que
+vinham por dependência e este programa nunca usa: o **OpenSSL** (12,3 MB, e vinha
+duplicado — só serve ao TLS do QtNetwork, e aqui o QtNetwork é usado apenas para
+named pipes; o Qt continua com TLS pelo `qschannelbackend.dll`, do Windows) e o
+**`opengl32sw.dll`** (19,7 MB, o rasterizador de software do Qt). Este último foi
+verificado com janela de verdade: abre no modo normal, com `QT_OPENGL=software` e
+com `QT_OPENGL=desktop`. O motivo é que o TextForge é Widgets puro — nada aqui cria
+um contexto OpenGL, e o Qt só carrega o rasterizador quando alguém cria um.
+
+Se em alguma máquina o programa não abrir, o primeiro teste é tirar
+`opengl32sw.dll` de `DLLS_DESNECESSARIAS` no `.spec` e gerar de novo.
 
 **No one-dir, o `TextForge.exe` sozinho não funciona.** Ele tem 2,7 MB; os outros
 97 MB estão em `_internal\` (Qt, Python, os recursos). Copiar só o `.exe` produz um
 erro do Windows na abertura — foi verificado.
 
 Por isso o `build.bat` gera, além da pasta, **`dist\TextForge-0.1.0-win64.zip`**
-(39 MB comprimido) com a pasta `TextForge\` na raiz — extrair no Explorer produz a
+(33 MB comprimido) com a pasta `TextForge\` na raiz — extrair no Explorer produz a
 pasta certa em vez de despejar 169 arquivos onde você estiver. Dentro do ZIP vai um
 **`ARQUIVOS.txt`** listando tudo agrupado por função, dizendo o que quebra se cada
 grupo faltar; o mesmo arquivo fica em `dist\TextForge-0.1.0-arquivos.txt`.

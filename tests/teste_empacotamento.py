@@ -44,10 +44,12 @@ def _lista_do_spec(fonte: str, nome: str) -> list[str]:
     """
     arvore = ast.parse(fonte)
     for no in ast.walk(arvore):
+        # Lista OU tupla: no .spec `excludes` e' lista e `DLLS_DESNECESSARIAS` e'
+        # tupla, e o teste nao deve depender de qual foi escolhida.
         if (isinstance(no, ast.Assign) and no.targets
                 and isinstance(no.targets[0], ast.Name)
                 and no.targets[0].id == nome
-                and isinstance(no.value, ast.List)):
+                and isinstance(no.value, (ast.List, ast.Tuple))):
             return [e.value for e in no.value.elts
                     if isinstance(e, ast.Constant) and isinstance(e.value, str)]
     return []
@@ -154,6 +156,26 @@ def testar_excludes() -> None:
           "optimize=1, e nao 2 (o 2 apagaria os docstrings)")
     for dll in ("Qt6Core.dll", "python313.dll", "qwindows.dll"):
         checa(dll in spec, f"{dll} esta' fora do UPX (custo de partida e antivirus)")
+
+    secao("DLLs descartadas do pacote")
+
+    descartadas = _lista_do_spec(spec, "DLLS_DESNECESSARIAS")
+    checa(len(descartadas) >= 4,
+          f"o .spec descarta {len(descartadas)} DLL(s) que vinham por dependencia")
+    for esperada in ("libcrypto-3.dll", "libssl-3.dll", "opengl32sw.dll"):
+        checa(esperada in descartadas, f"{esperada} esta' na lista")
+    # A remocao e' feita sobre `a.binaries`, e nao por `excludes`: aquele age sobre
+    # MODULOS Python, e estas sao bibliotecas nativas.
+    checa("a.binaries = [" in spec,
+          "e sao filtradas de `a.binaries` (excludes nao pega DLL nativa)")
+    checa("qschannelbackend" in spec,
+          "*** o .spec registra que o Qt continua com TLS pelo Schannel do "
+          "Windows -- e' o que torna seguro tirar o OpenSSL ***")
+    checa("QT_OPENGL=software" in spec,
+          "*** e registra a MEDICAO que justifica tirar o opengl32sw ***")
+    checa("nao foi possivel testar" in spec.lower()
+          or "NAO FOI POSSIVEL TESTAR" in spec,
+          "e declara o que NAO foi possivel testar (RDP, driver quebrado)")
 
 
 def testar_versao() -> None:

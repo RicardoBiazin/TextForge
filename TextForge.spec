@@ -1,5 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""Receita do PyInstaller. VERSIONADA de proposito.
+r"""Receita do PyInstaller. VERSIONADA de proposito.
+
+(String CRUA: este docstring cita caminhos do Windows como `dist\TextForge`, e sem o
+`r` o Python avisa de sequencia de escape invalida ao analisar o arquivo.)
 
 Nos outros projetos desta maquina o `*.spec` esta' no .gitignore, porque e' gerado
 por um `empacotar.py`. Aqui ele e' versionado -- junto com `versao.txt`,
@@ -95,14 +98,27 @@ upx_exclude = [
 # criptografia envolvida. E o Qt continua com backend de TLS mesmo assim: o
 # `qschannelbackend.dll` usa o Schannel do proprio Windows e fica no pacote.
 #
-# O `opengl32sw.dll` (19,7 MB) NAO esta' nesta lista de proposito. Ele e' o
-# rasterizador de software do Qt, o caminho de contingencia para maquina sem driver
-# de video utilizavel ou sessao por RDP. Remove-lo economizaria mais que tudo o que
-# esta' aqui, mas o modo de falha -- "nao abre no computador de outra pessoa" -- nao
-# e' reproduzivel nesta maquina, e 20 MB nao valem esse risco.
+# `opengl32sw.dll` (19,7 MB) -- o rasterizador de software do Qt (Mesa/llvmpipe).
+# REMOVIDO, e o risco foi MEDIDO com janela de verdade (plataforma "windows", nao
+# offscreen -- em offscreen o teste nao valeria nada, porque ali OpenGL nunca entra):
+#
+#   modo normal          janela abre
+#   QT_OPENGL=software   janela abre
+#   QT_OPENGL=desktop    janela abre
+#
+# O motivo de nem `QT_OPENGL=software` quebrar: o TextForge e' Widgets puro. Nao ha'
+# QOpenGLWidget, QtQuick nem QtWebEngine (os tres estao nos `excludes`), entao nada
+# aqui cria um contexto OpenGL -- e o Qt so' carrega o rasterizador quando alguem
+# cria um. A DLL vinha junto por dependencia do PySide6, e nunca era aberta.
+#
+# O QUE NAO FOI POSSIVEL TESTAR nesta maquina: sessao por RDP e maquina com driver
+# de video quebrado. O argumento acima vale para elas tambem (continua sem contexto
+# OpenGL), mas argumento nao e' medicao. SE ALGUEM RELATAR QUE NAO ABRE, o primeiro
+# teste e' tirar "opengl32sw.dll" desta lista e gerar de novo.
 DLLS_DESNECESSARIAS = (
     "libcrypto-3.dll", "libcrypto-3-x64.dll",
     "libssl-3.dll", "libssl-3-x64.dll",
+    "opengl32sw.dll",
 )
 
 a = Analysis(
