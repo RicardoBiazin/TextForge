@@ -248,6 +248,53 @@ with appdata_temporario():
     checa(janela.vinculos.tem_tratador("ajuda.sobre"),
           "clicar no credito leva ao dialogo Sobre, que ja' existia")
 
+    # -- o link do autor no dialogo Sobre ---------------------------------
+    # O dialogo e' modal; o teste substitui a caixa para capturar o texto sem
+    # nunca exibi-la -- um modal em offscreen penduraria a suite para sempre.
+    import re                                                    # noqa: E402
+    import textforge                                             # noqa: E402
+    from PySide6.QtCore import Qt as _Qt                         # noqa: E402
+    from PySide6.QtWidgets import QMessageBox as _QMB            # noqa: E402
+    from textforge.interface import janela as _jm                # noqa: E402
+
+    capturado: dict = {}
+
+    class _CaixaFalsa(_QMB):
+        def exec(self):                                          # noqa: A003
+            capturado["texto"] = self.text()
+            capturado["flags"] = self.textInteractionFlags()
+            return 0
+
+    original_qmb, original_url = _jm.QMessageBox, _jm.LINKEDIN
+    try:
+        _jm.QMessageBox = _CaixaFalsa
+
+        _jm.LINKEDIN = ""
+        janela.mostrar_sobre()
+        checa("<a href=" not in capturado["texto"],
+              "*** sem LINKEDIN configurado, nenhum link e' inventado ***")
+        checa(AUTOR in capturado["texto"], "e o autor aparece do mesmo jeito")
+
+        _jm.LINKEDIN = "https://exemplo.invalido/perfil"
+        janela.mostrar_sobre()
+        achado = re.search(r"<a href='([^']+)'>([^<]+)</a>", capturado["texto"])
+        checa(achado is not None, "com LINKEDIN configurado, o link aparece")
+        if achado:
+            checa_igual(achado.group(1), "https://exemplo.invalido/perfil",
+                        "apontando para o endereco configurado")
+            checa_igual(achado.group(2), "LinkedIn", "com o rotulo 'LinkedIn'")
+        # Sem esta flag o `<a href>` fica azul e NAO abre ao ser clicado.
+        checa(bool(capturado["flags"]
+                   & _Qt.TextInteractionFlag.LinksAccessibleByMouse),
+              "*** e e' CLICAVEL de verdade (LinksAccessibleByMouse) ***")
+        checa(VERSAO in capturado["texto"],
+              "o Sobre tambem traz a versao")
+    finally:
+        _jm.QMessageBox, _jm.LINKEDIN = original_qmb, original_url
+
+    checa_igual(textforge.LINKEDIN, "",
+                "no repositorio o LINKEDIN fica VAZIO ate' o dono informar a URL")
+
     # ---------------------------------------------------------------------
     secao("6b - os menus da barra continuam VIVOS (regressao)")
 

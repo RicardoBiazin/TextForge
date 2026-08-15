@@ -22,7 +22,8 @@ from PySide6.QtGui import QCloseEvent, QIcon
 from PySide6.QtWidgets import (QApplication, QFileDialog, QMainWindow,
                                QMessageBox, QToolBar, QWidget)
 
-from textforge import (APP, AUTOR, VERSAO, arquivos, busca, codificacao,
+from textforge import (APP, AUTOR, LINKEDIN, VERSAO, arquivos, busca,
+                       codificacao,
                        configuracao, log_interno, recursos,
                        sessao as sessao_mod)
 from textforge import busca_em_arquivos as bfa
@@ -2535,20 +2536,41 @@ class JanelaPrincipal(QMainWindow):
             except ImportError:
                 opcionais.append(f"<i>{nome} ausente — {para_que} desligado</i>")
 
-        QMessageBox.about(
-            self, f"Sobre o {APP}",
+        # O link so' aparece se houver um endereco configurado -- ver LINKEDIN em
+        # textforge/__init__.py. `QMessageBox.about` ja' trata rich text e abre
+        # `<a href>` no navegador padrao.
+        #
+        # Abrir um endereco que NOS escrevemos no fonte nao tem relacao com o
+        # requisito 35: o que ele proibe e' executar o CONTEUDO de um arquivo que o
+        # usuario abriu. Aqui nada vem do documento.
+        assinatura = f"Desenvolvido por <b>{AUTOR}</b>"
+        if LINKEDIN:
+            assinatura += (f" &middot; <a href='{LINKEDIN}'>LinkedIn</a>")
+        assinatura += " &middot; licenca MIT"
+
+        caixa = QMessageBox(self)
+        caixa.setWindowTitle(f"Sobre o {APP}")
+        caixa.setTextFormat(Qt.TextFormat.RichText)
+        # Sem isto o `<a href>` aparece como texto azul e NAO abre ao ser clicado.
+        caixa.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction)
+        caixa.setIconPixmap(
+            self.windowIcon().pixmap(64, 64) if not self.windowIcon().isNull()
+            else QMessageBox.standardIcon(QMessageBox.Icon.Information))
+        caixa.setText(
             f"<h3>{APP} {VERSAO}</h3>"
             f"<p>Editor de arquivos tecnicos: texto, codigo-fonte, "
             f"configuracao e dados.</p>"
             f"<p><b>Nao executa o conteudo dos arquivos que abre.</b></p>"
-            f"<p>Desenvolvido por <b>{AUTOR}</b> &middot; licenca MIT</p>"
-            f"<p style='color:gray'>"
+            f"<p>{assinatura}</p>")
+        caixa.setInformativeText(
+            f"<span style='color:gray'>"
             f"Python {sys.version.split()[0]} &middot; "
             f"PySide6 {versao_pyside} &middot; Qt {qVersion()}<br>"
             f"{platform.system()} {platform.release()}<br>"
-            f"{'<br>'.join(opcionais)}</p>"
-            f"<p style='color:gray'>Interface em PySide6 (Qt for Python), "
-            f"LGPLv3.</p>")
+            f"{'<br>'.join(opcionais)}<br><br>"
+            f"Interface em PySide6 (Qt for Python), LGPLv3.</span>")
+        caixa.exec()
 
     def abrir_log(self) -> None:
         caminho = configuracao.caminho_log()

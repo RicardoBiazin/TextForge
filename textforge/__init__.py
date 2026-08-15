@@ -20,4 +20,13 @@ APP_ARQUIVO = "TextForge"
 VERSAO = "0.1.1"
 AUTOR = "Ricardo Biazin"
 
+# Perfil do autor, mostrado como link no dialogo Sobre. VAZIO nao quebra nada: o
+# link simplesmente nao aparece. E' de proposito que o valor esteja aqui e nao
+# escrito no meio do dialogo -- e' o mesmo principio da VERSAO, um lugar so'.
+#
+# So' entra aqui endereco CONFERIDO pelo dono do perfil: um link de rede social
+# aponta para uma pessoa real, e um slug adivinhado levaria o usuario para o perfil
+# de outra pessoa.
+LINKEDIN = ""
+
 __version__ = VERSAO
