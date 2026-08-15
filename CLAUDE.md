@@ -40,6 +40,7 @@ Cada uma já causou um defeito real. Estão anotadas também no ponto exato do c
 | `vigia.py` | O tail **nunca** usa mmap (o arquivo cresce debaixo do mapeamento) e **sempre** um `IncrementalDecoder` (senão meio caractere multibyte vira U+FFFD permanente). |
 | `grande/indice.py` | Fechar o mmap com o worker lendo dele estoura. `parar()` **adia** o fechamento em vez de bloquear a interface. |
 | `arquivos.py` | `ReplaceFileW` via ctypes, e não `os.replace`: o segundo perde as ACEs explícitas e os fluxos alternativos do original. |
+| `interface/abas.py` | Todo `connect()` que o gerenciador cria para uma aba entra em `aba.conexoes` e é **desfeito** em `encerrar()`. O lambda captura a aba no `__defaults__` e a conexão vive num objeto que a aba possui: um ciclo que atravessa o C++, invisível para o coletor do Python. Medido: 20 abas de 1,1 MB faziam a memória subir **523 MB**; desconectando, 41 MB. |
 | `interface/menus.py` | **Nunca** `QAction.menu()`. No PySide6 o QMenu devolvido tem o tempo de vida atrelado ao wrapper Python do QAction: quando ele é coletado, o shiboken **destrói o QMenu em C++** e a barra fica com ponteiro pendurado. Use `vinculos.menu(grupo)`. Há varredura estática em `teste_janela.py`. |
 | `interface/janela.py` | Comando de menu **não** vai direto em `aba.editor`. O atalho do QAction é resolvido pelo `QShortcutMap` **antes** de o evento chegar ao widget em foco, então com a aba mostrando o visor, a tabela ou o log ao vivo, o comando ia para o editor **escondido**: `Ctrl+C` copiava nada e `Ctrl+D` marcava como modificado um arquivo somente-leitura. Ao criar uma view nova, ensine `_no_editor` a rotear para ela. |
 | `editor/widget.py` | Tecla que é **só modificador** (Ctrl, Shift, Alt…) nunca conta como "ação" na seleção em bloco. Apertar Ctrl para depois apertar C gera um KeyPress do próprio Ctrl **antes** do C — e limpar ali fazia a seleção sumir no caminho, sem o `Ctrl+C` nunca ter bloco para copiar. |
@@ -94,6 +95,19 @@ o teste percorre trava a suíte para sempre em modo offscreen. Separe "montar" d
 de temporização, ele é pior que nenhum — foi o que aconteceu com o `pausar()` do
 tail, que a suíte aprovou e a fumaça com um processo real reprovou. Prefira afirmar
 a propriedade (nada se perde, nada se repete) a afirmar um instante.
+
+**Nunca escreva `checa(X or True, ...)`.** A auditoria de 15/08/2026 achou cinco
+delas, e duas escondiam defeito real: o `QTextDocument` que não era liberado ao
+fechar a aba, e o comentário do prólogo que o formatador de XML apagava. Se uma
+verificação não passa, ou o código está errado ou a afirmação está errada — enfraquecer
+a condição não é a terceira opção. Um `checa(True, "X não estourou")` depois de uma
+operação é legítimo; uma condição tautológica com rótulo que promete outra coisa não é.
+
+**Cuidado com o que mede nada:** três armadilhas já apareceram aqui —
+`isVisible()` é sempre False numa janela nunca exibida; `processEvents()` **não**
+entrega `DeferredDelete` (use `ajudantes.drenar_eventos`); e uma função de medição
+que devolve `0.0` no `except` transforma qualquer teto em tautologia (use
+`ajudantes.memoria_privada_mb`, que levanta em vez de mentir).
 
 ## Ao acrescentar um recurso
 

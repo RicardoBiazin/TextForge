@@ -27,7 +27,8 @@ import re
 import sys
 import time
 
-from ajudantes import checa, checa_igual, preparar_qt, resumir, secao
+from ajudantes import (checa, checa_igual, memoria_privada_mb, preparar_qt,
+                       resumir, secao)
 
 TEM_QT = preparar_qt()
 
@@ -71,35 +72,13 @@ def gerar(caminho: pathlib.Path, linhas: int) -> int:
     return tamanho
 
 
-def ram_mb() -> float:
-    """Memoria privada do processo, em MB. 0.0 quando nao da' para medir."""
-    try:
-        import ctypes
-        import ctypes.wintypes as wt
-
-        class _Contadores(ctypes.Structure):
-            _fields_ = [("cb", wt.DWORD), ("PageFaultCount", wt.DWORD),
-                        ("PeakWorkingSetSize", ctypes.c_size_t),
-                        ("WorkingSetSize", ctypes.c_size_t),
-                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                        ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                        ("PagefileUsage", ctypes.c_size_t),
-                        ("PeakPagefileUsage", ctypes.c_size_t)]
-
-        info = _Contadores()
-        info.cb = ctypes.sizeof(info)
-        if not ctypes.windll.psapi.GetProcessMemoryInfo(
-                ctypes.windll.kernel32.GetCurrentProcess(),
-                ctypes.byref(info), info.cb):
-            return 0.0
-        # PagefileUsage e' a memoria PRIVADA (commit). O WorkingSet incluiria as
-        # paginas do mmap, e o teste diria que o programa gastou 200 MB quando
-        # quem as guarda e' o cache do sistema operacional.
-        return info.PagefileUsage / (1024 * 1024)
-    except Exception:                        # noqa: BLE001 - so' diagnostico
-        return 0.0
+# A medicao vem dos ajudantes. A copia que existia AQUI tinha um defeito que a
+# fazia devolver 0.0 SEMPRE: sem `restype = c_void_p`, o ctypes truncava o
+# pseudo-handle de `GetCurrentProcess()` para 32 bits e a chamada falhava, mas o
+# `except` devolvia 0.0 em silencio. Resultado: a verificacao de consumo de RAM
+# abaixo passava sem medir NADA, e o "0 MB" que ela imprimia foi reportado como se
+# fosse um resultado.
+ram_mb = memoria_privada_mb
 
 
 # ===========================================================================
@@ -133,9 +112,15 @@ def testar_indice(caminho: pathlib.Path, tamanho: int) -> None:
                 "total de linhas certo (contando a vazia final)")
 
     gasto = ram_mb() - antes
+    # Uma casa decimal, e nao zero: "0 MB" e' indistinguivel de um medidor
+    # quebrado, e este ja' esteve quebrado -- devolvia 0.0 sempre. "0.2 MB" e'
+    # visivelmente uma medicao.
+    checa(ram_mb() > 1.0,
+          f"o medidor de memoria FUNCIONA (processo com {ram_mb():.1f} MB "
+          f"privados)")
     checa(gasto < TETO_DE_RAM_MB,
           f"o indice de {tamanho // (1024 * 1024)} MB custou "
-          f"{gasto:.0f} MB de memoria privada (teto: {TETO_DE_RAM_MB} MB)")
+          f"{gasto:.1f} MB de memoria privada (teto: {TETO_DE_RAM_MB} MB)")
     # O indice esparso tem uma entrada a cada PASSO_DO_INDICE linhas.
     marcadores = len(fonte._marcadores)
     checa(marcadores < TOTAL_DE_LINHAS // 100,
@@ -480,7 +465,10 @@ def testar_visor(caminho: pathlib.Path) -> None:
           "a infobar diz que e' somente leitura")
     checa("Pesquisar" in painel.aviso.text(),
           "e diz o que CONTINUA funcionando, nao so' o que foi desligado")
-    checa(painel.barra.isVisible() or True, "a infobar existe")
+    # `isVisible()` NAO serve: numa janela que nunca foi exibida ele e' False para
+    # todo filho, e a verificacao passaria (ou falharia) por um motivo alheio.
+    checa(not painel.barra.isHidden(),
+          "a infobar nao nasce escondida")
     painel.aplicar_tema(tmod.embutido("claro"))
     checa(True, "trocar de tema no painel nao estoura")
 

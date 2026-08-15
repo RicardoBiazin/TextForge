@@ -85,6 +85,19 @@ quebrar, leia o comentário no código antes de "consertar" o teste.
   arquivo de integração isso é destruição silenciosa e torna qualquer `fc /b`
   inútil. Se este teste quebrar, o `ModeloCsv` voltou a reconstruir linhas que
   ninguém editou — o `registros_crus`/`sujas` existe exatamente para impedir isso.
+- **`teste_abas.py`, "o QTextDocument da aba fechada é LIBERADO".** Esta verificação
+  já existiu como `checa(referencia() is None or True, ...)` — sempre verdadeira — e
+  escondeu um vazamento real por várias etapas. As lambdas de
+  `GerenciadorAbas.adicionar` capturam a aba no `__defaults__`, e a conexão vive num
+  objeto que a própria aba possui: um ciclo através do C++ que o coletor do Python
+  não enxerga. **Medido: 20 abas de um arquivo de 1,1 MB faziam a memória privada
+  subir 523 MB.** Se este teste quebrar, alguém acrescentou um `connect()` em
+  `adicionar` sem pôr em `aba.conexoes`.
+- **`teste_seguranca.py`, "FORMATAR preserva o comentário do prólogo".** Também
+  nasceu como `checa(tem_comentario or True, ...)`, e escondia o formatador de XML
+  **apagando** um comentário que vem antes do elemento raiz — alteração silenciosa de
+  conteúdo, que o requisito 38 proíbe. O prólogo é reemitido do texto original,
+  porque ele não cabe na árvore (um comentário antes da raiz não é filho de ninguém).
 - **`teste_empacotamento.py`, "PySide6.QtNetwork NÃO está nos excludes".** É onde
   vivem `QLocalServer`/`QLocalSocket` — instância única e "Abrir com". Excluí-lo
   parece razoável ("não usamos rede") e mata os dois **só no `.exe`**. O teste lê a

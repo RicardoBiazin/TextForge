@@ -19,7 +19,7 @@ versoes divergentes, e uma delas se perderia no primeiro salvamento.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QObject, QPoint, Qt, Signal
 from PySide6.QtWidgets import (QApplication, QMenu, QStackedWidget, QTabBar,
                                QTabWidget, QToolButton, QVBoxLayout, QWidget)
 
@@ -47,6 +47,10 @@ class Aba(QWidget):
         super().__init__(parent)
         self.documento = documento
         self.cfg = cfg
+
+        # Conexoes que o `GerenciadorAbas` cria para esta aba. Elas sao desfeitas
+        # em `encerrar()` -- ver o comentario la', e o de `adicionar`.
+        self.conexoes: list = []
 
         self.pilha = QStackedWidget(self)
         layout = QVBoxLayout(self)
@@ -126,6 +130,19 @@ class Aba(QWidget):
             self.documento.fonte_grande = None
         else:
             self.documento.fechar()
+
+        # Desfaz as conexoes que o gerenciador criou para esta aba. Sem isto, o
+        # ciclo lambda -> aba -> (objeto da aba) -> conexao -> lambda atravessa o
+        # C++, o coletor do Python nao o enxerga, e o QTextDocument fica na
+        # memoria para sempre. Ver o comentario em `GerenciadorAbas.adicionar`.
+        for conexao in self.conexoes:
+            try:
+                QObject.disconnect(conexao)
+            except (RuntimeError, TypeError):
+                # Conexao ja' desfeita (o objeto de origem pode ter morrido
+                # antes). Nao ha' o que fazer, e nao e' erro.
+                pass
+        self.conexoes.clear()
 
     def _pedir_menu(self, ponto: QPoint) -> None:
         gerenciador = self.parent()
@@ -300,21 +317,33 @@ class GerenciadorAbas(QTabWidget):
         aba = Aba(documento, self.cfg, self.tema, self)
         indice = self.addTab(aba, documento.titulo_da_aba)
         self.setTabToolTip(indice, str(documento.caminho or documento.nome))
-        aba.editor.posicao_mudou.connect(
-            lambda l, c, a=aba: self._repassar(a, self.posicao_mudou, l, c))
-        aba.editor.selecao_mudou.connect(
-            lambda n, l, a=aba: self._repassar(a, self.selecao_mudou, n, l))
-        aba.posicao_no_visor.connect(
-            lambda l, c, a=aba: self._repassar(a, self.posicao_mudou, l, c))
-        aba.indexacao_andou.connect(
-            lambda v, t, a=aba: self._repassar(a, self.indexacao_andou, v, t))
-        aba.indexacao_terminou.connect(
-            lambda n, a=aba: self._repassar(a, self.indexacao_terminou, n))
+
+        # AS CONEXOES SAO GUARDADAS PARA PODEREM SER DESFEITAS. Cada lambda abaixo
+        # captura `aba` no `__defaults__`, e a conexao vive num objeto que a
+        # PROPRIA aba possui (o editor, o documento, o QTextDocument dele). Isso
+        # forma um ciclo que atravessa o C++, e o coletor do Python nao consegue
+        # atravessar um QObject para enxerga-lo -- entao a aba, o documento e o
+        # QTextDocument NUNCA sao liberados ao fechar.
+        #
+        # MEDIDO: 20 abas de um arquivo de 1,1 MB abertas e fechadas faziam a
+        # memoria privada do processo subir 523 MB. Desconectando, 41 MB.
+        aba.conexoes = [
+            aba.editor.posicao_mudou.connect(
+                lambda l, c, a=aba: self._repassar(a, self.posicao_mudou, l, c)),
+            aba.editor.selecao_mudou.connect(
+                lambda n, l, a=aba: self._repassar(a, self.selecao_mudou, n, l)),
+            aba.posicao_no_visor.connect(
+                lambda l, c, a=aba: self._repassar(a, self.posicao_mudou, l, c)),
+            aba.indexacao_andou.connect(
+                lambda v, t, a=aba: self._repassar(a, self.indexacao_andou, v, t)),
+            aba.indexacao_terminou.connect(
+                lambda n, a=aba: self._repassar(a, self.indexacao_terminou, n)),
+            documento.qt.modificationChanged.connect(
+                lambda _m, a=aba: self._atualizar_titulo(a)),
+            documento.metadados_mudaram.connect(
+                lambda a=aba: self._atualizar_titulo(a)),
+        ]
         self._por_botao_de_fechar(indice)
-        documento.qt.modificationChanged.connect(
-            lambda _m, a=aba: self._atualizar_titulo(a))
-        documento.metadados_mudaram.connect(
-            lambda a=aba: self._atualizar_titulo(a))
         if focar:
             self.setCurrentIndex(indice)
         return aba

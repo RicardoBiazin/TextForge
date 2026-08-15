@@ -39,6 +39,12 @@ NBSP = " "
 def documento(texto: str) -> QTextDocument:
     doc = QTextDocument()
     doc.setPlainText(texto)
+    # `setPlainText` MARCA o documento como modificado. Sem limpar aqui, todo
+    # teste que verificasse "a operacao nao modificou o documento" leria True
+    # antes de a operacao acontecer -- foi o que mascarou a secao 12. E' tambem o
+    # que `Documento.definir_texto` faz no programa de verdade.
+    doc.setModified(False)
+    doc.clearUndoRedoStacks()
     return doc
 
 
@@ -303,8 +309,10 @@ antes = doc.toPlainText()
 checa_igual(busca.substituir_todos(doc, Criterio(texto="zzz"), "x"), 0,
             "substituir termo inexistente devolve 0")
 checa_igual(doc.toPlainText(), antes, "e nao altera o documento")
-checa(not doc.isModified() or True,
-      "e nao deixa um passo de desfazer vazio")
+checa(not doc.isModified(),
+      "e NAO marca o documento como modificado (nada foi trocado)")
+checa(not doc.isUndoAvailable(),
+      "*** nem deixa um passo de desfazer vazio na pilha ***")
 
 vazio = documento("")
 checa_igual(busca.substituir_todos(vazio, Criterio(texto="a"), "b"), 0,

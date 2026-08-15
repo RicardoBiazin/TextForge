@@ -176,6 +176,30 @@ checa(g.fechar(0), "e com True fecha")
 # ---------------------------------------------------------------------------
 secao("5 - fechar libera o QTextDocument (nao vaza)")
 
+# ESTE TESTE JA' NASCEU FRACO E MASCAROU UM VAZAMENTO DE VERDADE. A condicao era
+# `referencia() is None or True` -- ou seja, sempre verdadeira. Enquanto isso, o
+# QTextDocument NUNCA era liberado: as lambdas de `GerenciadorAbas.adicionar`
+# capturam a aba no `__defaults__`, e a conexao vive num objeto que a propria aba
+# possui, formando um ciclo que atravessa o C++ e que o coletor do Python nao
+# enxerga. MEDIDO: 20 abas de um arquivo de 1,1 MB faziam a memoria privada subir
+# 523 MB; com as conexoes desfeitas em `Aba.encerrar()`, 41 MB.
+from PySide6.QtCore import QCoreApplication, QEvent              # noqa: E402
+from PySide6.QtWidgets import QApplication                       # noqa: E402
+
+
+def drenar_eventos() -> None:
+    """`processEvents()` NAO entrega DeferredDelete.
+
+    E' o detalhe que faz a diferenca entre "o objeto vazou" e "a destruicao ainda
+    nao foi processada" -- sem `sendPostedEvents(DeferredDelete)` o teste acusaria
+    vazamento em codigo correto.
+    """
+    for _ in range(4):
+        QApplication.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        gc.collect()
+
+
 g = novo_gerenciador()
 doc = Documento.novo(CFG)
 doc.definir_texto("x" * 100_000)
@@ -183,14 +207,34 @@ g.adicionar(doc)
 referencia = weakref.ref(doc.qt)
 del doc
 g.fechar(0)
-# deleteLater precisa de uma volta do laco de eventos para efetivar.
-from PySide6.QtWidgets import QApplication                      # noqa: E402
-QApplication.processEvents()
-gc.collect()
-QApplication.processEvents()
-checa(referencia() is None or True,
-      "o QTextDocument da aba fechada fica elegivel para coleta")
+drenar_eventos()
+checa(referencia() is None,
+      "*** o QTextDocument da aba fechada e' LIBERADO (sem esta desconexao, um "
+      "arquivo de 10 MB ficava na memoria para sempre) ***")
 checa_igual(g.count(), 0, "e a aba saiu de fato")
+
+# O documento inteiro tambem, e nao so' o QTextDocument.
+g2 = novo_gerenciador()
+d2 = Documento.novo(CFG)
+d2.definir_texto("y" * 50_000)
+aba2 = g2.adicionar(d2)
+refs = (weakref.ref(d2), weakref.ref(aba2))
+del d2, aba2
+g2.fechar(0)
+drenar_eventos()
+checa_igual([r() is None for r in refs], [True, True],
+            "o Documento e a Aba tambem sao liberados")
+
+# E as conexoes ficaram registradas para poderem ser desfeitas -- se alguem
+# acrescentar um `connect` novo em `adicionar` sem por na lista, o vazamento volta.
+g3 = novo_gerenciador()
+d3 = Documento.novo(CFG)
+aba3 = g3.adicionar(d3)
+checa(len(aba3.conexoes) >= 7,
+      f"as conexoes do gerenciador ficam guardadas na aba "
+      f"({len(aba3.conexoes)}), para serem desfeitas ao fechar")
+g3.fechar(0)
+checa_igual(aba3.conexoes, [], "e a lista e' esvaziada ao encerrar")
 
 # ---------------------------------------------------------------------------
 secao("6 - duplicar aba")

@@ -90,11 +90,11 @@ Se em alguma máquina o programa não abrir, o primeiro teste é tirar
 75 MB estão em `_internal\` (Qt, Python, os recursos). Copiar só o `.exe` produz um
 erro do Windows na abertura — foi verificado.
 
-Por isso o `build.bat` gera, além da pasta, **`dist\TextForge-0.1.2-win64.zip`**
+Por isso o `build.bat` gera, além da pasta, **`dist\TextForge-0.1.3-win64.zip`**
 (33 MB comprimido) com a pasta `TextForge\` na raiz — extrair no Explorer produz a
 pasta certa em vez de despejar 226 arquivos onde você estiver. Dentro do ZIP vai um
 **`ARQUIVOS.txt`** listando tudo agrupado por função, dizendo o que quebra se cada
-grupo faltar; o mesmo arquivo fica em `dist\TextForge-0.1.2-arquivos.txt`.
+grupo faltar; o mesmo arquivo fica em `dist\TextForge-0.1.3-arquivos.txt`.
 
 Nada precisa ser instalado, nada é escrito fora da pasta do programa e de
 `%APPDATA%\TextForge`, e não é preciso administrador.
@@ -250,7 +250,7 @@ Escritos aqui para não serem descobertos no pior momento:
 .venv\Scripts\python.exe tests\rodar_todos.py
 ```
 
-2.445 verificações em 31 suítes, sem pytest. `tests\README.md` diz o que cada suíte
+2.548 verificações em 31 suítes, sem pytest. `tests\README.md` diz o que cada suíte
 cobre, quanto ocupa em `%TEMP%` e — a seção que importa — **quais regressões elas
 guardam**.
 

@@ -38,6 +38,9 @@ from textforge.formatadores.base import (ErroDeSintaxe, Recusa, Resultado, Saida
 log = log_interno.obter(__name__)
 
 _DECLARACAO = re.compile(r"^\s*<\?xml[^>]*\?>", re.IGNORECASE)
+# Um item do PROLOGO: a declaracao, uma instrucao de processamento ou um
+# comentario, cada um seguido do espaco que vier depois.
+_ITEM_DO_PROLOGO = re.compile(r"\s*(?:<\?.*?\?>|<!--.*?-->)\s*", re.DOTALL)
 _CDATA = re.compile(r"<!\[CDATA\[")
 _PREFIXO = re.compile(r"xmlns:([\w.-]+)\s*=\s*[\"']([^\"']+)[\"']")
 
@@ -91,6 +94,33 @@ def _registrar_namespaces(texto: str) -> None:
             pass
 
 
+def _prologo(texto: str) -> str:
+    """Tudo o que vem ANTES do elemento raiz, verbatim.
+
+    Nao e' so' a declaracao `<?xml?>`: o prologo pode ter COMENTARIOS e instrucoes
+    de processamento, e num arquivo de integracao o comentario do topo costuma ser
+    justamente o que diz de onde o arquivo veio.
+
+    Eles nao entram na ARVORE de proposito -- um comentario antes da raiz nao e'
+    filho de ninguem, e adiciona-lo produzia "multiple elements on top level" no
+    analisador. Por isso o prologo e' capturado do TEXTO e reemitido literalmente:
+    e' a unica forma de nao perde-lo, e reemitir o texto original garante que nem
+    o espacamento dele muda.
+
+    Antes desta funcao, so' a declaracao era preservada e um comentario de topo
+    DESAPARECIA ao formatar -- alteracao silenciosa de conteudo, que o requisito 38
+    proibe. O defeito passou despercebido porque a verificacao que deveria pega-lo
+    estava escrita como `checa(tem_comentario or True, ...)`.
+    """
+    fim = 0
+    while True:
+        casamento = _ITEM_DO_PROLOGO.match(texto, fim)
+        if casamento is None:
+            break
+        fim = casamento.end()
+    return texto[:fim].strip()
+
+
 def _preparar(texto: str) -> tuple[ET.Element, str, list[str]] | Saida:
     """Valida e monta a arvore. Devolve (raiz, declaracao, avisos) ou a falha."""
     try:
@@ -131,8 +161,7 @@ def _preparar(texto: str) -> tuple[ET.Element, str, list[str]] | Saida:
         linha, coluna, motivo, contexto = seguranca.posicao_do_erro(exc, texto)
         return ErroDeSintaxe(linha, coluna, motivo, None, contexto)
 
-    casamento = _DECLARACAO.match(texto)
-    declaracao = casamento.group(0).strip() if casamento else ""
+    declaracao = _prologo(texto)
     if "'" in texto and '"' not in texto[:200]:
         avisos.append("As aspas simples dos atributos foram trocadas por aspas "
                       "duplas (e' equivalente em XML).")

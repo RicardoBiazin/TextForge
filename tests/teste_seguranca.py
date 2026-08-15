@@ -98,8 +98,21 @@ checa_igual(raiz.find("servidor/nome").text, "Producao", "e o texto tambem")
 
 # Comentario e PI ficam na arvore: um formatador que os descartasse estaria
 # alterando o documento.
+# Comentario do PROLOGO (antes da raiz) NAO entra na arvore de proposito: ele nao
+# e' filho de ninguem, e adiciona-lo produzia "multiple elements on top level".
+# Quem o preserva e' o FORMATADOR, que reemite o prologo do texto original -- e e'
+# isso que se verifica, porque e' o que o usuario ve.
 tem_comentario = any(no.tag is ET.Comment for no in raiz.iter())
-checa(tem_comentario or True, "comentarios sao preservados na arvore")
+checa(not tem_comentario,
+      "comentario ANTES da raiz nao entra na arvore (nao e' filho de ninguem)")
+
+from textforge.formatadores import de_xml                        # noqa: E402
+formatado = de_xml.formatar(BOM, {"usa_espacos": True, "largura": 2})
+checa(hasattr(formatado, "texto") and "<!-- comentario -->" in formatado.texto,
+      "*** mas FORMATAR preserva o comentario do prologo (perde-lo seria "
+      "alteracao silenciosa de conteudo, requisito 38) ***")
+checa(hasattr(formatado, "texto") and "instrucao dados" in formatado.texto,
+      "e a instrucao de processamento de dentro tambem sobrevive")
 
 # Aninhamento absurdo e' recusado antes de estourar a pilha.
 profundo = "<a>" * 6000 + "x" + "</a>" * 6000

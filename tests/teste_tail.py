@@ -398,10 +398,15 @@ def testar_view(pasta: pathlib.Path) -> None:
     vista.definir_parcial("")
     checa(not vista.parcial.isVisible(), "some quando a linha completa")
 
+    # O ARQUIVO, e nao a tela. A condicao anterior era
+    # `alvo.exists() and st_size == 0 or True`: o `st_size == 0` era FALSO (o
+    # arquivo tem conteudo), e o `or True` escondia isso -- ela nunca verificou o
+    # que o rotulo prometia.
+    antes_de_limpar = alvo.read_bytes()
     vista.limpar()
-    checa_igual(vista.texto.toPlainText(), "", "limpar esvazia a tela")
-    checa(alvo.exists() and alvo.stat().st_size == 0 or True,
-          "e nao toca no arquivo")
+    checa_igual(vista.texto.toPlainText(), "", "limpar esvazia a TELA")
+    checa_igual(alvo.read_bytes(), antes_de_limpar,
+                "*** e o ARQUIVO fica byte a byte igual (limpar e' so' da view) ***")
 
     secao("Pausar pelo botao")
     vista.iniciar()

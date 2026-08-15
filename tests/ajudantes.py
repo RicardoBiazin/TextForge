@@ -137,6 +137,69 @@ def appdata_temporario() -> Iterator[pathlib.Path]:
                 os.environ["APPDATA"] = anterior
 
 
+def memoria_privada_mb() -> float:
+    """Memoria PRIVADA (commit) do processo, em MB. 0.0 quando nao da' para medir.
+
+    Privada, e nao WorkingSet: o working set inclui as paginas de um mmap, e um
+    teste de arquivo grande diria que o programa gastou 200 MB quando quem as
+    guarda e' o cache do sistema operacional.
+
+    ARMADILHA QUE JA' CUSTOU UMA MEDICAO ERRADA: sem declarar
+    `GetCurrentProcess.restype = c_void_p`, o ctypes trata o retorno como C int e
+    TRUNCA o pseudo-handle -1 para 32 bits. A chamada falha, a struct fica zerada,
+    e a funcao devolve 0.0 -- fazendo qualquer "checa(gasto < teto)" passar sem
+    medir nada. O `if not ok: raise` existe para isso nunca mais passar calado.
+    """
+    if os.name != "nt":
+        return 0.0
+    import ctypes
+    import ctypes.wintypes as wt
+
+    class _Contadores(ctypes.Structure):
+        _fields_ = [("cb", wt.DWORD), ("PageFaultCount", wt.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t)]
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+    psapi = ctypes.windll.psapi
+    psapi.GetProcessMemoryInfo.argtypes = [ctypes.c_void_p,
+                                           ctypes.POINTER(_Contadores), wt.DWORD]
+    psapi.GetProcessMemoryInfo.restype = wt.BOOL
+
+    info = _Contadores()
+    info.cb = ctypes.sizeof(info)
+    if not psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(),
+                                      ctypes.byref(info), info.cb):
+        raise OSError("GetProcessMemoryInfo falhou: a medicao de memoria nao "
+                      "pode ser silenciosamente zero")
+    return info.PagefileUsage / (1024 * 1024)
+
+
+def drenar_eventos(rodadas: int = 4) -> None:
+    """Processa eventos ATE' E INCLUSIVE os DeferredDelete, e coleta o lixo.
+
+    `QApplication.processEvents()` sozinho NAO entrega DeferredDelete -- o objeto
+    de `deleteLater()` continua vivo, e um teste de vazamento acusaria codigo
+    correto.
+    """
+    import gc
+
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QApplication
+
+    for _ in range(rodadas):
+        QApplication.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        gc.collect()
+
+
 def escrever_bytes(caminho: pathlib.Path, dados: bytes) -> pathlib.Path:
     caminho.parent.mkdir(parents=True, exist_ok=True)
     caminho.write_bytes(dados)
