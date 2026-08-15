@@ -292,8 +292,24 @@ with appdata_temporario():
     finally:
         _jm.QMessageBox, _jm.LINKEDIN = original_qmb, original_url
 
-    checa_igual(textforge.LINKEDIN, "",
-                "no repositorio o LINKEDIN fica VAZIO ate' o dono informar a URL")
+    # A URL configurada de verdade. `https://` NAO e' preciosismo: o texto vira
+    # rich text com `<a href>` clicavel, e um esquema `file:` ou `javascript:` ali
+    # seria um link que faz outra coisa ao ser clicado. O unico esquema aceito e' o
+    # de uma pagina web.
+    checa(not textforge.LINKEDIN or textforge.LINKEDIN.startswith("https://"),
+          f"*** o LINKEDIN, quando configurado, e' https:// ***"
+          f" ({textforge.LINKEDIN or 'vazio'})")
+    checa(not textforge.LINKEDIN or "'" not in textforge.LINKEDIN,
+          "e nao tem aspa simples, que quebraria o atributo href do HTML montado")
+    if textforge.LINKEDIN:
+        _jm.LINKEDIN = textforge.LINKEDIN
+        try:
+            _jm.QMessageBox = _CaixaFalsa
+            janela.mostrar_sobre()
+        finally:
+            _jm.QMessageBox = original_qmb
+        checa(textforge.LINKEDIN in capturado["texto"],
+              "e a URL de verdade chega ao dialogo Sobre")
 
     # ---------------------------------------------------------------------
     secao("6b - os menus da barra continuam VIVOS (regressao)")

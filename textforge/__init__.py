@@ -17,7 +17,7 @@ APP = "TextForge"
 # de "Abrir com" quebra em silencio.
 APP_ARQUIVO = "TextForge"
 
-VERSAO = "0.1.1"
+VERSAO = "0.1.2"
 AUTOR = "Ricardo Biazin"
 
 # Perfil do autor, mostrado como link no dialogo Sobre. VAZIO nao quebra nada: o
@@ -27,6 +27,6 @@ AUTOR = "Ricardo Biazin"
 # So' entra aqui endereco CONFERIDO pelo dono do perfil: um link de rede social
 # aponta para uma pessoa real, e um slug adivinhado levaria o usuario para o perfil
 # de outra pessoa.
-LINKEDIN = ""
+LINKEDIN = "https://www.linkedin.com/in/ricardo-biazin/"
 
 __version__ = VERSAO
