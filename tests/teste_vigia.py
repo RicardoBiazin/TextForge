@@ -24,6 +24,7 @@ from ajudantes import (checa, checa_igual, pasta_temporaria, preparar_qt,
 if not preparar_qt():
     sys.exit(pular("PySide6 nao esta' instalado neste interpretador"))
 
+from textforge import configuracao                               # noqa: E402
 from textforge.arquivos import Assinatura                       # noqa: E402
 from textforge.vigia import Vigia                                # noqa: E402
 
@@ -209,5 +210,78 @@ with pasta_temporaria() as pasta:
     checa_igual(len(avisos), 1, "o arquivo aparecer no disco conta como mudanca")
 
     vigia.parar()
+
+# ---------------------------------------------------------------------------
+secao("7 - *** enquanto o dialogo esta' aberto, o vigia CALA (regressao) ***")
+
+# O defeito: o dialogo de alteracao externa e' modal, e `exec()` roda um laco de
+# eventos ANINHADO. O timer do vigia continua disparando dentro dele; num arquivo
+# que CRESCE -- um log sendo escrito por outro programa -- cada disparo via um
+# estado novo, emitia de novo, e a janela abria outro modal por cima. Medido antes
+# da correcao: 47 modais aninhados em 4 segundos, sem limite, ate' travar.
+
+with pasta_temporaria() as pasta:
+    crescendo = pasta / "cresce.log"
+    crescendo.write_bytes(b"linha 0\n")
+    avisos: list[str] = []
+    vigia = Vigia()
+    vigia.mudou.connect(lambda c, _a: avisos.append(c))
+    vigia.acompanhar(crescendo, Assinatura.de_caminho(crescendo))
+
+    mexer(crescendo, b"linha 1\n")
+    vigia.verificar_agora()
+    checa_igual(len(avisos), 1, "a primeira mudanca avisa normalmente")
+
+    # Dentro do `em_resolucao` -- que e' onde o dialogo estaria na tela -- o
+    # arquivo continua crescendo, e NENHUM aviso novo pode sair.
+    with vigia.em_resolucao(crescendo):
+        for n in range(2, 12):
+            mexer(crescendo, f"linha {n}\n".encode())
+            vigia.verificar_agora()
+        checa_igual(len(avisos), 1,
+                    "*** 10 mudancas com o dialogo aberto: NENHUM aviso novo ***")
+
+    # Ao sair, a assinatura e' reconferida: a decisao do usuario vale para o que
+    # esta' no disco AGORA, e o aviso nao dispara na hora por causa do passado.
+    vigia.verificar_agora()
+    checa_igual(len(avisos), 1,
+                "*** e ao fechar o dialogo ele nao dispara pelo que ja' passou ***")
+
+    # Mas uma mudanca NOVA, depois disso, volta a avisar.
+    mexer(crescendo, b"depois do dialogo\n")
+    vigia.verificar_agora()
+    checa_igual(len(avisos), 2,
+                "uma mudanca NOVA depois do dialogo volta a avisar")
+
+    # O silencio e' POR ARQUIVO: resolver um nao pode calar o outro.
+    outro = pasta / "outro.txt"
+    outro.write_bytes(b"a")
+    vigia.acompanhar(outro, Assinatura.de_caminho(outro))
+    with vigia.em_resolucao(crescendo):
+        mexer(outro, b"b")
+        vigia.verificar_agora()
+        checa_igual(len(avisos), 3,
+                    "*** resolver um arquivo nao cala o aviso de OUTRO ***")
+    vigia.parar()
+
+# ---------------------------------------------------------------------------
+secao("8 - o proprio log do TextForge nao e' vigiado")
+
+# Abrir o textforge.log no editor e' util (ha' um item de menu para isso), e fazia
+# o vigia disparar a cada linha gravada -- avisando de uma alteracao "externa" que
+# na verdade era nossa.
+from textforge.interface.janela import JanelaPrincipal                # noqa: E402
+
+eh_nosso = JanelaPrincipal._escrito_pelo_proprio_programa
+checa(eh_nosso(configuracao.caminho_log()),
+      "o textforge.log e' reconhecido como escrito pelo proprio programa")
+checa(eh_nosso(configuracao.caminho_erro()),
+      "o erro.log tambem")
+with pasta_temporaria() as pasta:
+    qualquer = pasta / "textforge.log"      # mesmo NOME, outro lugar
+    qualquer.write_bytes(b"x")
+    checa(not eh_nosso(qualquer),
+          "*** mas um arquivo com o mesmo NOME em outra pasta NAO e' o nosso "
+          "(a comparacao e' por caminho resolvido, e nao por nome) ***")
 
 sys.exit(resumir())

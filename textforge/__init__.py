@@ -17,7 +17,7 @@ APP = "TextForge"
 # de "Abrir com" quebra em silencio.
 APP_ARQUIVO = "TextForge"
 
-VERSAO = "0.1.0"
+VERSAO = "0.1.1"
 AUTOR = "Ricardo Biazin"
 
 __version__ = VERSAO

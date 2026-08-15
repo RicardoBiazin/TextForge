@@ -670,7 +670,16 @@ class JanelaPrincipal(QMainWindow):
             vazia.deleteLater()
 
         if doc.caminho is not None and doc.assinatura is not None:
-            self.vigia.acompanhar(doc.caminho, doc.assinatura)
+            if self._escrito_pelo_proprio_programa(doc.caminho):
+                # O TextForge escreve neste arquivo o tempo todo. Vigia-lo faria
+                # o aviso de "alterado externamente" aparecer a cada linha de log
+                # -- e "externamente" seria mentira: quem alterou fomos nos.
+                self.barra.showMessage(
+                    f"{doc.nome} e' escrito pelo proprio TextForge: avisos de "
+                    f"alteracao externa ficam desligados. Use Ferramentas > "
+                    f"Acompanhar alteracoes para ver as linhas chegando.", 9000)
+            else:
+                self.vigia.acompanhar(doc.caminho, doc.assinatura)
             configuracao.registrar_recente(self.cfg, doc.caminho)
         if doc.binario:
             dialogos.avisar(
@@ -697,6 +706,26 @@ class JanelaPrincipal(QMainWindow):
         editor = self.abas.editor_atual()
         if editor is not None:
             editor.ir_para_linha(linha, coluna)
+
+    @staticmethod
+    def _escrito_pelo_proprio_programa(caminho: pathlib.Path) -> bool:
+        """Este arquivo e' escrito pelo TextForge enquanto ele roda?
+
+        Sao o log e o relatorio de erro. Abrir um deles no editor -- o que e' util,
+        e ha' ate' um item de menu para isso -- fazia o vigia disparar a cada linha
+        gravada, avisando de uma alteracao "externa" que na verdade e' nossa.
+        """
+        try:
+            alvo = caminho.resolve()
+        except OSError:
+            return False
+        for nosso in (configuracao.caminho_log(), configuracao.caminho_erro()):
+            try:
+                if alvo == nosso.resolve():
+                    return True
+            except OSError:
+                continue
+        return False
 
     def _aba_vazia_descartavel(self) -> Aba | None:
         aba = self.abas.aba_atual()
@@ -2289,6 +2318,16 @@ class JanelaPrincipal(QMainWindow):
 
     def _resolver_alteracao_externa(self, doc: Documento, *,
                                     ao_salvar: bool = False) -> bool:
+        # `em_resolucao` cala o vigia para ESTE arquivo enquanto o dialogo esta'
+        # na tela. Sem isso o programa TRAVA: o modal roda um laco de eventos
+        # aninhado, o timer do vigia continua disparando dentro dele, e num
+        # arquivo que cresce cada disparo abre outro modal por cima. Ver o
+        # comentario do metodo em `vigia.py`.
+        with self.vigia.em_resolucao(doc.caminho or ""):
+            return self._perguntar_alteracao_externa(doc, ao_salvar=ao_salvar)
+
+    def _perguntar_alteracao_externa(self, doc: Documento, *,
+                                     ao_salvar: bool = False) -> bool:
         escolha = dialogos.alteracao_externa(
             self, doc.nome, doc.descrever_mudanca_externa(), doc.modificado)
         if escolha == "recarregar":

@@ -23,6 +23,7 @@ automatica -- o requisito 27 proibe sobrescrever ou descartar em silencio.
 from __future__ import annotations
 
 import codecs
+import contextlib
 import os
 import pathlib
 import threading
@@ -66,6 +67,9 @@ class Vigia(QObject):
         self._watcher.fileChanged.connect(self._ao_notificar)
         self._esperadas: dict[str, Assinatura] = {}
         self._pausados: set[str] = set()
+        # Caminhos cujo aviso ESTA' SENDO RESOLVIDO agora (o dialogo esta' na
+        # tela). Ver `em_resolucao`.
+        self._resolvendo: set[str] = set()
 
         self._timer = QTimer(self)
         self._timer.setInterval(max(250, intervalo_ms))
@@ -120,6 +124,36 @@ class Vigia(QObject):
     def retomar(self, caminho: str | pathlib.Path) -> None:
         self._pausados.discard(str(pathlib.Path(caminho)))
 
+    @contextlib.contextmanager
+    def em_resolucao(self, caminho: str | pathlib.Path):
+        """Enquanto o aviso deste caminho esta' sendo resolvido, nao emitir outro.
+
+        SEM ISTO O PROGRAMA TRAVA, e nao e' hipotese: o dialogo de alteracao
+        externa e' modal, e `exec()` roda um laco de eventos ANINHADO. O timer
+        daqui continua disparando dentro desse laco; num arquivo que cresce -- um
+        log sendo escrito por outro programa, ou o proprio textforge.log aberto no
+        editor -- cada disparo ve' um estado novo, emite de novo, e a janela abre
+        OUTRO modal dentro do primeiro.
+
+        Medido antes da correcao: 47 modais aninhados em 4 segundos, com o
+        aninhamento crescendo sem limite ate' o programa morrer.
+
+        Um `set` em vez de um booleano porque o aviso e' POR ARQUIVO: dois
+        arquivos podem mudar, e resolver um nao pode calar o outro para sempre.
+        """
+        alvo = str(pathlib.Path(caminho))
+        self._resolvendo.add(alvo)
+        try:
+            yield
+        finally:
+            self._resolvendo.discard(alvo)
+            # A assinatura e' reconferida DEPOIS: o arquivo pode ter mudado mais
+            # enquanto o dialogo estava aberto, e o proximo aviso deve partir do
+            # estado atual, e nao disparar na hora por causa do que passou.
+            atual = Assinatura.de_caminho(pathlib.Path(alvo))
+            if alvo in self._esperadas:
+                self._esperadas[alvo] = atual
+
     def vigiados(self) -> list[str]:
         return sorted(self._esperadas)
 
@@ -150,6 +184,12 @@ class Vigia(QObject):
     def _checar(self, caminho: str) -> None:
         esperada = self._esperadas.get(caminho)
         if esperada is None:
+            return
+        if caminho in self._resolvendo:
+            # Ha' um dialogo aberto para este arquivo. Sair AQUI, antes de
+            # atualizar a assinatura esperada, e' o que faz a mudanca continuar
+            # pendente: quando o usuario responder, `em_resolucao` reconfere o
+            # estado atual e a decisao dele vale para o que estiver no disco.
             return
         atual = Assinatura.de_caminho(pathlib.Path(caminho))
 

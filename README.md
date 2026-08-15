@@ -86,22 +86,22 @@ um contexto OpenGL, e o Qt só carrega o rasterizador quando alguém cria um.
 Se em alguma máquina o programa não abrir, o primeiro teste é tirar
 `opengl32sw.dll` de `DLLS_DESNECESSARIAS` no `.spec` e gerar de novo.
 
-**No one-dir, o `TextForge.exe` sozinho não funciona.** Ele tem 2,7 MB; os outros
-97 MB estão em `_internal\` (Qt, Python, os recursos). Copiar só o `.exe` produz um
+**No one-dir, o `TextForge.exe` sozinho não funciona.** Ele tem 4 MB; os outros
+75 MB estão em `_internal\` (Qt, Python, os recursos). Copiar só o `.exe` produz um
 erro do Windows na abertura — foi verificado.
 
-Por isso o `build.bat` gera, além da pasta, **`dist\TextForge-0.1.0-win64.zip`**
+Por isso o `build.bat` gera, além da pasta, **`dist\TextForge-0.1.1-win64.zip`**
 (33 MB comprimido) com a pasta `TextForge\` na raiz — extrair no Explorer produz a
-pasta certa em vez de despejar 169 arquivos onde você estiver. Dentro do ZIP vai um
+pasta certa em vez de despejar 226 arquivos onde você estiver. Dentro do ZIP vai um
 **`ARQUIVOS.txt`** listando tudo agrupado por função, dizendo o que quebra se cada
-grupo faltar; o mesmo arquivo fica em `dist\TextForge-0.1.0-arquivos.txt`.
+grupo faltar; o mesmo arquivo fica em `dist\TextForge-0.1.1-arquivos.txt`.
 
 Nada precisa ser instalado, nada é escrito fora da pasta do programa e de
 `%APPDATA%\TextForge`, e não é preciso administrador.
 
-**No one-file**, o `.exe` basta. O preço é que ele descompacta ~38 MB em `%TEMP%` **a
-cada abertura**, o que custa 4 a 6 s de partida — num editor aberto dezenas de vezes
-por dia isso incomoda. E ele aparece como **dois** processos no Gerenciador de
+**No one-file**, o `.exe` basta. O preço é que ele descompacta ~35 MB em `%TEMP%` **a
+cada abertura** — o que hoje custa pouco (~1,7 s de mediana), mas ainda é mais que o
+one-dir. E ele aparece como **dois** processos no Gerenciador de
 Tarefas: o bootloader que descompacta e o programa de verdade. É normal do
 PyInstaller, não são duas instâncias — o que importa para a instância única é que
 abrir um segundo arquivo não crie um segundo *par*.
