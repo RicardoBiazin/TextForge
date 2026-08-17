@@ -19,14 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Este programa usa PySide6 (Qt for Python), distribuido sob LGPLv3. O TextForge
-nao modifica o Qt e o carrega como biblioteca dinamica (Qt6Core.dll,
-Qt6Gui.dll, Qt6Widgets.dll, Qt6Network.dll), entregues como arquivos separados
-no pacote -- o que atende a exigencia da LGPL de permitir a substituicao da
-biblioteca. Detalhes da licenca do Qt: https://doc.qt.io/qt-6/licensing.html
-
-PyQt6 e QScintilla NAO sao usados: sao GPL da Riverbank, e a GPL tornaria este
-projeto GPL tambem.

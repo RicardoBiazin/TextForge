@@ -262,3 +262,6 @@ fim.
 MIT — veja [LICENSE](LICENSE). PySide6-Essentials é LGPLv3, compatível.
 PyQt e QScintilla ficaram **fora** de propósito: são GPL da Riverbank e
 contaminariam a licença deste projeto.
+
+As licenças dos componentes de terceiros, e o porquê de cada escolha, estão em
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
