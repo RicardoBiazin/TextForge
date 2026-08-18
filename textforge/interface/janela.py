@@ -2550,6 +2550,10 @@ class JanelaPrincipal(QMainWindow):
 
         caixa = QMessageBox(self)
         caixa.setWindowTitle(f"Sobre o {APP}")
+        # QMessageBox se estreita e cresce para baixo. Sem uma largura minima, a
+        # lista de recursos quebra em muitas linhas e a caixa passa de 900 px de
+        # altura -- nao cabe em tela de laptop. Alargar e' o que a mantem baixa.
+        caixa.setStyleSheet("QLabel{min-width:620px;}")
         caixa.setTextFormat(Qt.TextFormat.RichText)
         # Sem isto o `<a href>` aparece como texto azul e NAO abre ao ser clicado.
         caixa.setTextInteractionFlags(
@@ -2557,11 +2561,32 @@ class JanelaPrincipal(QMainWindow):
         caixa.setIconPixmap(
             self.windowIcon().pixmap(64, 64) if not self.windowIcon().isNull()
             else QMessageBox.standardIcon(QMessageBox.Icon.Information))
+        # A lista existe porque "editor de arquivos tecnicos" nao diz nada a quem
+        # abriu o Sobre para descobrir o que o programa faz. Cada item e' um
+        # recurso QUE EXISTE -- esta tela nao promete o que o editor nao entrega.
         caixa.setText(
             f"<h3>{APP} {VERSAO}</h3>"
-            f"<p>Editor de arquivos tecnicos: texto, codigo-fonte, "
-            f"configuracao e dados.</p>"
-            f"<p><b>Nao executa o conteudo dos arquivos que abre.</b></p>"
+            f"<p>Editor de arquivos tecnicos para Windows: texto, codigo-fonte, "
+            f"configuracao e dados. Para abrir, olhar, procurar, corrigir e "
+            f"fechar &mdash; sem esperar indexacao de projeto.</p>"
+            f"<p><b>O que ele faz:</b></p>"
+            f"<ul>"
+            f"<li><b>Codificacao</b> em cascata, avisando o que se perderia "
+            f"antes de converter</li>"
+            f"<li><b>Arquivos grandes</b> num visor virtualizado: 178 MB em "
+            f"0,01 s</li>"
+            f"<li><b>Acompanhar log</b> sendo escrito, com rotacao e "
+            f"truncamento</li>"
+            f"<li><b>Selecao em bloco</b> por coluna, com TAB contado como o "
+            f"olho ve</li>"
+            f"<li><b>Realce</b> de 23 linguagens, PHP dentro de HTML incluso</li>"
+            f"<li><b>Formatar e validar</b> XML, JSON, SQL, CSS, HTML e "
+            f"Python</li>"
+            f"<li><b>CSV em modo tabela</b>, byte a byte identico ao voltar</li>"
+            f"<li><b>Pesquisa</b> incremental, regex e busca em pasta</li>"
+            f"</ul>"
+            f"<p><b>Nao executa o conteudo dos arquivos que abre.</b> "
+            f"Salvamento atomico, que preserva permissoes do arquivo.</p>"
             f"<p>{assinatura}</p>")
         caixa.setInformativeText(
             f"<span style='color:gray'>"

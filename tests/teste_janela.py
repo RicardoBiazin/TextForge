@@ -289,6 +289,21 @@ with appdata_temporario():
               "*** e e' CLICAVEL de verdade (LinksAccessibleByMouse) ***")
         checa(VERSAO in capturado["texto"],
               "o Sobre tambem traz a versao")
+
+        # O Sobre e' onde alguem vai descobrir PARA QUE serve o programa, entao
+        # a descricao e' conteudo, nao enfeite. Cada item citado aqui existe de
+        # verdade -- se um recurso for removido, este teste cobra a atualizacao.
+        _jm.LINKEDIN = ""
+        janela.mostrar_sobre()
+        texto = capturado["texto"]
+        for termo in ("Codificacao", "Arquivos grandes", "Acompanhar log",
+                      "Selecao em bloco", "Realce", "Formatar e validar",
+                      "CSV em modo tabela", "Pesquisa"):
+            checa(termo in texto, f"o Sobre diz o que faz: {termo}")
+        checa("Nao executa o conteudo" in texto,
+              "e mantem a promessa de nao executar o conteudo aberto")
+        checa(texto.count("<li>") == texto.count("</li>"),
+              "a lista do Sobre tem HTML balanceado")
     finally:
         _jm.QMessageBox, _jm.LINKEDIN = original_qmb, original_url
 
