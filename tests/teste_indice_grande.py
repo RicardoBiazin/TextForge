@@ -325,6 +325,16 @@ def testar_indexador_em_thread(caminho: pathlib.Path) -> None:
           f"{duracao:.1f}s (teto {teto})")
     checa(progressos[-1][0] == progressos[-1][1],
           "o ultimo progresso reporta 100% do arquivo")
+    # `Tarefa.run` emite `concluido` e SO' DEPOIS `terminou` (no finally), e quem
+    # zera `_tarefa` e' o `terminou`. Sair do laco no `concluido` nao garante que
+    # o `terminou` ja' foi processado: os dois chegam pela fila, e o teste passava
+    # ou falhava conforme o Qt os entregasse ou nao na mesma rodada de eventos
+    # (media medida: 1 falha a cada 8 execucoes). Drena antes de verificar, como
+    # ja' e' feito no caso do cancelamento abaixo.
+    for _ in range(50):
+        if not indexador.rodando:
+            break
+        QCoreApplication.processEvents()
     checa(not indexador.rodando, "terminou, e o indexador nao esta' mais rodando")
     indexador.parar()
     checa(True, "parar() apos o fim so' fecha a fonte")
