@@ -50,6 +50,27 @@ LIMITE_PARA_HASH = 8 * 1024 * 1024
 # funcao retornar. Em unidade de rede, sem isto a troca pode ficar em cache.
 REPLACEFILE_WRITE_THROUGH = 0x00000001
 
+FILE_ATTRIBUTE_READONLY = 0x00000001
+ATRIBUTOS_INVALIDOS = 0xFFFFFFFF        # o que GetFileAttributesW devolve no erro
+
+# Erros do Windows que significam "alguem esta' segurando o arquivo, ou eu nao
+# tenho direito de mexer nele" -- os unicos em que vale diagnosticar a causa.
+ERROS_DE_ACESSO = (5, 32, 33)           # ACCESS_DENIED, SHARING_VIOLATION, LOCK
+
+
+class FalhaNaTroca(OSError):
+    """A troca falhou, com uma explicacao que serve para quem esta' na frente.
+
+    Existe porque o OSError cru do Windows -- "[WinError 5] Acesso negado:
+    'x.csv.tfnew' -> 'x.csv'" -- nao diz ao usuario o que fazer, e as duas
+    causas comuns (arquivo somente-leitura, arquivo aberto no Excel) produzem
+    exatamente a mesma mensagem. Guarda a `causa` para o log.
+    """
+
+    def __init__(self, mensagem: str, causa: OSError) -> None:
+        super().__init__(mensagem)
+        self.causa = causa
+
 
 class AlteradoNoDisco(Exception):
     """O arquivo mudou fora do editor desde que foi lido.
@@ -196,21 +217,102 @@ def _gravar_direto(alvo: pathlib.Path, dados: bytes) -> None:
 
 def _trocar(temporario: pathlib.Path, destino: pathlib.Path,
             usar_replacefile: bool) -> None:
-    """Troca o temporario pelo destino, com retry."""
-    ultimo: OSError | None = None
-    for espera in ESPERAS:
-        if espera:
-            time.sleep(espera)
-        try:
-            if usar_replacefile and _replace_file_w(temporario, destino):
+    """Troca o temporario pelo destino, com retry.
+
+    Tira o atributo somente-leitura do destino antes de trocar e o devolve
+    depois: NEM `ReplaceFileW` NEM `os.replace` conseguem substituir um arquivo
+    marcado como somente-leitura -- os dois falham com "acesso negado", e o
+    arquivo termina com o mesmo atributo que tinha, de um jeito ou de outro.
+    """
+    atributos = _atributos(destino)
+    tirou_somente_leitura = False
+    if atributos >= 0 and atributos & FILE_ATTRIBUTE_READONLY:
+        tirou_somente_leitura = _definir_atributos(
+            destino, atributos & ~FILE_ATTRIBUTE_READONLY)
+        log.info("%s esta' somente-leitura; atributo removido para a troca "
+                 "(sera' devolvido em seguida)", destino.name)
+
+    try:
+        ultimo: OSError | None = None
+        for espera in ESPERAS:
+            if espera:
+                time.sleep(espera)
+            try:
+                if usar_replacefile and _replace_file_w(temporario, destino):
+                    return
+                os.replace(temporario, destino)
                 return
-            os.replace(temporario, destino)
-            return
-        except OSError as exc:
-            ultimo = exc
-            log.debug("troca falhou (%s); tentando de novo", exc)
-    assert ultimo is not None
-    raise ultimo
+            except OSError as exc:
+                ultimo = exc
+                log.debug("troca falhou (%s); tentando de novo", exc)
+        assert ultimo is not None
+        # Diagnostica AQUI, ainda com o atributo removido: com ele de volta,
+        # a sondagem de arquivo travado daria falso positivo em todo arquivo
+        # somente-leitura.
+        raise FalhaNaTroca(_explicar_falha(destino, ultimo), ultimo)
+    finally:
+        if tirou_somente_leitura:
+            _definir_atributos(destino, atributos)
+
+
+def _atributos(caminho: pathlib.Path) -> int:
+    """Atributos Windows do arquivo; -1 quando nao da' para saber."""
+    if os.name != "nt":
+        return -1
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    except (OSError, AttributeError):
+        return -1
+    kernel32.GetFileAttributesW.restype = ctypes.c_uint32
+    valor = kernel32.GetFileAttributesW(ctypes.c_wchar_p(str(caminho)))
+    return -1 if valor == ATRIBUTOS_INVALIDOS else int(valor)
+
+
+def _definir_atributos(caminho: pathlib.Path, valor: int) -> bool:
+    if os.name != "nt" or valor < 0:
+        return False
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    except (OSError, AttributeError):
+        return False
+    return bool(kernel32.SetFileAttributesW(ctypes.c_wchar_p(str(caminho)),
+                                            ctypes.c_uint32(valor)))
+
+
+def _travado_por_outro_programa(destino: pathlib.Path) -> bool:
+    """Alguem esta' segurando o arquivo?
+
+    Abrir para escrita e' a sondagem honesta: o Excel abre .csv sem permitir
+    escrita nem exclusao, entao o `open` falha enquanto a planilha estiver
+    aberta. Nao usa `os.access`, que no Windows olha so' o atributo e mente.
+    """
+    try:
+        with open(destino, "r+b"):
+            return False
+    except OSError:
+        return True
+
+
+def _explicar_falha(destino: pathlib.Path, erro: OSError) -> str:
+    """Transforma o erro do Windows numa frase que diz o que fazer."""
+    if getattr(erro, "winerror", None) not in ERROS_DE_ACESSO:
+        return str(erro)
+    nome = destino.name
+    if _travado_por_outro_programa(destino):
+        return (f"'{nome}' esta' aberto em outro programa, que nao deixa "
+                f"substitui-lo. O Excel faz isso com .csv enquanto a planilha "
+                f"estiver aberta. Feche o arquivo la' e salve de novo."
+                f"\n\n"
+                f"O que voce escreveu NAO foi perdido: continua aqui na aba.")
+    atributos = _atributos(destino)
+    if atributos >= 0 and atributos & FILE_ATTRIBUTE_READONLY:
+        return (f"'{nome}' esta' marcado como somente leitura e o Windows nao "
+                f"deixou remover o atributo. Tire a marca nas propriedades do "
+                f"arquivo, ou salve com outro nome.")
+    return (f"O Windows negou a substituicao de '{nome}'. Em geral e' falta de "
+            f"permissao na pasta, ou um antivirus segurando o arquivo."
+            f"\n\n"
+            f"Detalhe tecnico: {erro}")
 
 
 def _replace_file_w(temporario: pathlib.Path, destino: pathlib.Path) -> bool:

@@ -15,6 +15,7 @@ para ninguem "simplificar" isso depois.
 from __future__ import annotations
 
 import codecs
+import os
 import sys
 
 from ajudantes import (checa, checa_igual, pasta_temporaria, preparar_qt,
@@ -214,6 +215,66 @@ with pasta_temporaria() as pasta:
                 "falha na troca deixa o arquivo ORIGINAL intacto")
     checa_igual(list(pasta.glob("*" + arquivos.SUFIXO_TEMPORARIO)), [],
                 "e o temporario e' limpo mesmo em caso de erro")
+
+# ---------------------------------------------------------------------------
+secao("7b - troca sobre arquivo somente-leitura e arquivo travado")
+
+# Regressao: um .csv marcado como somente-leitura era editavel na tela mas o
+# salvamento morria com "[WinError 5] Acesso negado: x.csv.tfnew -> x.csv".
+# Nem ReplaceFileW nem os.replace substituem destino somente-leitura.
+if os.name == "nt":
+    import ctypes
+
+    RO = arquivos.FILE_ATTRIBUTE_READONLY
+    _k = ctypes.windll.kernel32
+    _k.GetFileAttributesW.restype = ctypes.c_uint32
+
+    def _somente_leitura(caminho):
+        return bool(_k.GetFileAttributesW(str(caminho)) & RO)
+
+    with pasta_temporaria() as pasta:
+        alvo = pasta / "conta.csv"
+        alvo.write_bytes(b"antes")
+        _k.SetFileAttributesW(str(alvo), RO)
+        try:
+            arquivos.gravar_atomico(alvo, b"depois")
+            checa_igual(alvo.read_bytes(), b"depois",
+                        "grava sobre arquivo marcado como somente-leitura")
+            checa(_somente_leitura(alvo),
+                  "e DEVOLVE o atributo somente-leitura depois de trocar")
+            checa_igual(list(pasta.glob("*" + arquivos.SUFIXO_TEMPORARIO)), [],
+                        "sem temporario para tras no caminho somente-leitura")
+        finally:
+            _k.SetFileAttributesW(str(alvo), 0x80)
+
+    # Arquivo aberto por outro processo sem permitir escrita: nao da' para
+    # salvar, mas o erro tem de dizer O QUE fazer, e o original fica intacto.
+    with pasta_temporaria() as pasta:
+        travado = pasta / "travado.csv"
+        travado.write_bytes(b"ORIGINAL")
+        GENERIC_READ, SHARE_READ, OPEN_EXISTING = 0x80000000, 0x1, 3
+        h = _k.CreateFileW(str(travado), GENERIC_READ, SHARE_READ, None,
+                           OPEN_EXISTING, 0, None)
+        try:
+            erro = None
+            try:
+                arquivos.gravar_atomico(travado, b"NOVO")
+            except OSError as exc:
+                erro = exc
+            checa(isinstance(erro, arquivos.FalhaNaTroca),
+                  "arquivo travado levanta FalhaNaTroca, nao OSError cru")
+            checa("aberto em outro programa" in str(erro),
+                  "e a mensagem diz que outro programa esta' segurando")
+            checa("WinError" not in str(erro),
+                  "sem despejar o WinError cru na cara do usuario")
+            checa(getattr(erro, "causa", None) is not None,
+                  "guardando o erro original em .causa para o log")
+            checa_igual(travado.read_bytes(), b"ORIGINAL",
+                        "e o arquivo original continua intacto")
+            checa_igual(list(pasta.glob("*" + arquivos.SUFIXO_TEMPORARIO)), [],
+                        "sem temporario para tras quando a troca falha")
+        finally:
+            _k.CloseHandle(h)
 
 # ---------------------------------------------------------------------------
 secao("8 - assinatura e alteracao externa (requisito 27)")

@@ -17,7 +17,7 @@ APP = "TextForge"
 # de "Abrir com" quebra em silencio.
 APP_ARQUIVO = "TextForge"
 
-VERSAO = "0.1.3"
+VERSAO = "0.1.4"
 AUTOR = "Ricardo Biazin"
 
 # Perfil do autor, mostrado como link no dialogo Sobre. VAZIO nao quebra nada: o
