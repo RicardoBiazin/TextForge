@@ -43,6 +43,10 @@ hiddenimports = [
     # Importados tardiamente, dentro de funcao, e por isso invisiveis para a
     # analise estatica do PyInstaller.
     "charset_normalizer",
+    # Leitura de .xlsx. Importado dentro de `planilha/leitor.py`, e so' quando
+    # uma planilha e' aberta. `et_xmlfile` e' dependencia dele, e o PyInstaller
+    # nao a alcanca sozinho porque o proprio openpyxl a importa tardiamente.
+    "openpyxl", "et_xmlfile",
     "textforge.linguagens.c_like", "textforge.linguagens.csv_",
     "textforge.linguagens.css", "textforge.linguagens.html",
     "textforge.linguagens.ini_", "textforge.linguagens.javascript",
@@ -50,7 +54,7 @@ hiddenimports = [
     "textforge.linguagens.php", "textforge.linguagens.python_",
     "textforge.linguagens.shell", "textforge.linguagens.sql",
     "textforge.linguagens.texto", "textforge.linguagens.xml_",
-    "textforge.linguagens.yaml_",
+    "textforge.linguagens.yaml_", "textforge.linguagens.planilha_",
 ]
 
 excludes = [

@@ -25,6 +25,14 @@ charset-normalizer>=3.4,<4
 # Formatar/identar SQL. Puro Python, ~200 KB. Import tardio.
 sqlparse>=0.5,<1
 
+# LER .xlsx. MIT, puro Python, ~250 KB (mais et_xmlfile, ~18 KB). Import tardio,
+# so' quando uma planilha e' aberta. NAO arrasta pandas nem numpy -- os dois
+# continuam nos `excludes` do .spec, e ha' teste garantindo isso.
+# Usado SOMENTE para leitura: a gravacao e' patch nos bytes do proprio pacote
+# ZIP, porque `openpyxl.save()` descarta graficos, tabelas dinamicas e macros.
+# Ver o docstring de textforge/planilha/__init__.py.
+openpyxl>=3.1,<4
+
 # Empacotamento. So' de desenvolvimento; nao vai dentro do .exe. A licenca tem
 # excecao explicita: o binario gerado nao vira GPL.
 pyinstaller>=6.16,<7

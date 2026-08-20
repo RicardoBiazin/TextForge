@@ -61,6 +61,7 @@ para rodar; sem PySide6 ela imprime **PULADO** em vez de falhar.
 | `teste_csv.py` | dialeto, registro multi-linha, **`para_texto()` sem edição idêntico**, parse lazy | PySide6 |
 | `teste_indice_grande.py` | índice esparso em 20 pontos, **padrão na fronteira de bloco**, teto de RAM, visor, cancelamento | PySide6, ~200 MB em `%TEMP%` |
 | `teste_tail.py` | leitura incremental, **multibyte cortado**, linha parcial, truncamento, rotação, pausar/retomar | PySide6 |
+| `teste_xlsx.py` | **patch sem perder gráfico/macro**, tipos de célula, `<dimension>` mentiroso, fórmula compartilhada, recusas | openpyxl; a parte de `Documento` pede PySide6 |
 | `teste_conversoes.py` | Base64/URL/HTML/JSON, tolerâncias do Base64, e o peso da **codificação** | nada |
 | `teste_hash.py` | digests contra **valores publicados**, leitura em blocos, texto x arquivo | nada |
 | `teste_paleta.py` | busca por **subsequência**, abertura rápida com teto, comentar/descomentar | PySide6 |
@@ -129,6 +130,20 @@ quebrar, leia o comentário no código antes de "consertar" o teste.
   anterior, `pausar()` só baixava uma bandeira e o worker seguia lendo por uma volta
   inteira; a suíte passava por sorte de temporização e a fumaça com um processo
   gravando de verdade pegou o vazamento.
+- **`teste_xlsx.py`, "sem edição, salvar devolve os MESMOS bytes" e "o gráfico
+  sai IDÊNTICO".** São os dois testes centrais da etapa 13, e existem porque o
+  caminho óbvio falha nos dois **em silêncio**: `openpyxl.load_workbook()`
+  seguido de `.save()` produz um arquivo perfeitamente válido, só que sem os
+  gráficos, sem as tabelas dinâmicas e sem os comentários encadeados. O usuário
+  corrige um número num relatório e descobre semanas depois. Se estes testes
+  quebrarem, alguém trocou o patch por uma regravação — leia
+  `textforge/planilha/__init__.py` antes de "consertar" o teste.
+- **`teste_xlsx.py`, "célula FORA do `<dimension>` declarado é lida assim
+  mesmo".** Em modo streaming o openpyxl acredita no `<dimension ref="A1:D4"/>`
+  da aba e para de ler ali. E `dimension` mente com frequência — programas que
+  geram planilha o escrevem estreito demais. Sem o `reset_dimensions()` do
+  `leitor.py`, uma coluna inteira que **existe** no arquivo simplesmente não
+  apareceria na grade, e nada avisaria.
 - **`teste_csv.py`, "Registro não é linha".** Um campo entre aspas pode conter
   `\n`. Dividir o CSV por linha parte o registro ao meio e desloca a tabela
   inteira dali para a frente. `dividir_registros` varre respeitando as aspas, e a

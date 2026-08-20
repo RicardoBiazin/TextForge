@@ -215,8 +215,11 @@ class BarraDeStatus(QStatusBar):
         self._visualizador.show()
 
     def definir_indentacao(self, usa_espacos: bool, largura: int) -> None:
+        # Largura zero significa "este arquivo nao tem indentacao" -- e' o caso
+        # da planilha. "Espacos: 0" seria um metadado inventado.
         self._indentacao.setText(
-            f"{'Espacos' if usa_espacos else 'TAB'}: {largura}")
+            f"{'Espacos' if usa_espacos else 'TAB'}: {largura}"
+            if largura > 0 else "—")
 
     def definir_insercao(self, inserindo: bool) -> None:
         self._insercao.setText("INS" if inserindo else "OVR")

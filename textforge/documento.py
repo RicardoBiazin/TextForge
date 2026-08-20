@@ -44,6 +44,12 @@ MODO_TEXTO = "texto"
 MODO_TABELA = "tabela"
 MODO_HEX = "hex"
 MODO_GRANDE = "grande"
+MODO_PLANILHA = "planilha"
+
+# Extensoes desviadas para o leitor de planilha ANTES do detector de binario.
+# Sem o desvio elas cairiam no MODO_HEX: um .xlsx e' um ZIP, e a assinatura
+# "PK\x03\x04" e' justamente o que `codificacao.detectar` recusa como binario.
+EXTENSOES_DE_PLANILHA = (".xlsx", ".xlsm")
 
 # Quanto se le' do INICIO de um arquivo grande para decidir codificacao, fim de
 # linha e linguagem. Ler o arquivo inteiro para isso e' o que o modo de arquivo
@@ -153,6 +159,11 @@ class Documento(QObject):
         # por isso `fechar()` TEM de ser chamado ao fechar a aba: um mmap aberto
         # segura o arquivo no Windows e impede outro programa de rotaciona-lo.
         self.fonte_grande = None
+        # `Pasta` viva quando `modo == MODO_PLANILHA`. Ela e' quem tem o
+        # conteudo: o `QTextDocument` fica VAZIO, porque um .xlsx nao tem texto.
+        # E' o mesmo arranjo do modo de arquivo grande, com a diferenca de que
+        # aqui o conteudo pode ser EDITADO e gravado de volta.
+        self.planilha = None
 
         self.qt.modificationChanged.connect(self.modificado_mudou)
 
@@ -273,6 +284,17 @@ class Documento(QObject):
         # RAM e trava a interface por dezenas de segundos -- e o teria feito antes
         # de o programa sequer poder decidir que nao queria isso.
         tamanho = arquivos.tamanho_de(alvo)
+
+        # A planilha e' desviada ANTES do teto de tamanho: o teto existe para o
+        # `QTextDocument`, e uma planilha nunca entra num. `_abrir_como_planilha`
+        # devolve False quando o arquivo so' PARECE planilha pela extensao -- um
+        # ZIP renomeado segue pelo caminho normal e vira hexadecimal.
+        teto_planilha = int(cfg.get("limite_planilha_mb", 100)) * 1024 * 1024
+        if (alvo.suffix.lower() in EXTENSOES_DE_PLANILHA and not codec_forcado
+                and tamanho <= teto_planilha
+                and doc._abrir_como_planilha(alvo, cfg)):
+            return doc
+
         teto = int(cfg.get("limite_texto_mb", 20)) * 1024 * 1024
         if tamanho > teto and not codec_forcado:
             doc._abrir_como_grande(alvo, cfg, tamanho)
@@ -286,6 +308,39 @@ class Documento(QObject):
                  codificacao.ROTULO_EOL.get(doc.fim_de_linha, "?"),
                  doc.perfil.como_decidiu if doc.perfil else "?")
         return doc
+
+    # ==================================================================
+    # Planilha (requisito 6, item Planilha)
+    # ==================================================================
+
+    def _abrir_como_planilha(self, alvo: pathlib.Path,
+                             cfg: dict[str, Any]) -> bool:
+        """Monta o documento em modo planilha. False se nao for uma.
+
+        O `QTextDocument` fica vazio: quem tem o conteudo e' a `Pasta`, e a
+        gravacao passa por ela em `bytes_para_salvar`. Codificacao e fim de linha
+        nao se aplicam -- um .xlsx e' um pacote ZIP, nao um arquivo de texto.
+        """
+        from textforge.planilha import deteccao, leitor
+
+        dados = arquivos.ler_bytes(alvo)
+        if not deteccao.parece_planilha(dados):
+            return False
+
+        self.assinatura = Assinatura.de_caminho(alvo, dados)
+        self.planilha = leitor.abrir(alvo, cfg, dados)
+        self.modo = MODO_PLANILHA
+        # `binario` fica False de proposito. Ele significa "conteudo que nao da'
+        # para mostrar", e a janela usa isso para avisar que nada foi exibido --
+        # o que aqui seria mentira: a planilha e' exibida, e em grade.
+        self.binario = False
+        self.somente_leitura = self.planilha.somente_leitura
+        self.aviso = self.planilha.aviso
+        self.detectar_linguagem()
+        log.info("aberto em MODO PLANILHA: %s (%d bytes, %d aba(s), %s)",
+                 alvo, len(dados), len(self.planilha.folhas),
+                 self.aviso or "gravavel")
+        return True
 
     # ==================================================================
     # Arquivo grande (requisito 15)
@@ -454,6 +509,10 @@ class Documento(QObject):
         """Le' o MESMO arquivo com outra codificacao (requisito 7)."""
         if self.caminho is None:
             raise ValueError("documento sem arquivo nao pode ser reaberto")
+        if self.modo == MODO_PLANILHA:
+            # Um .xlsx nao tem codificacao para trocar: o XML de dentro do pacote
+            # e' sempre UTF-8, declarado no proprio arquivo.
+            raise ValueError("planilha nao tem codificacao para reabrir")
         if self.modo == MODO_GRANDE:
             # Trocar a codificacao de um arquivo grande NAO o traz para a memoria:
             # so' a `FonteDeArquivo` passa a decodificar de outro jeito, e o
@@ -474,6 +533,16 @@ class Documento(QObject):
     def recarregar(self) -> None:
         """Descarta as alteracoes e le' o arquivo de novo."""
         if self.caminho is None:
+            return
+        if self.modo == MODO_PLANILHA:
+            # A `Pasta` inteira e' trocada, e nao atualizada: as edicoes
+            # pendentes apontam para celulas de um arquivo que mudou no disco, e
+            # aplica-las por cima do novo escreveria no lugar errado. Quem chama
+            # ja' confirmou o descarte com o usuario.
+            self.planilha = None
+            self._abrir_como_planilha(self.caminho, {})
+            self.qt.setModified(False)
+            self.metadados_mudaram.emit()
             return
         if self.modo == MODO_GRANDE:
             # Recarregar aqui e' reabrir o mmap e reindexar: o arquivo cresceu ou
@@ -505,7 +574,14 @@ class Documento(QObject):
           nova linha   se o original nao terminava com quebra, o salvo tambem nao
           espaco final aparado SO' se a preferencia estiver ligada (vem desligada)
           nbsp/U+2028  preservados, porque `texto()` usa toRawText()
+
+        A planilha atende ao MESMO requisito por outro caminho: sem edicao, os
+        bytes do .xlsx voltam identicos; com edicao, so' a aba tocada e' regravada
+        e o resto do pacote e' copiado. Ver `planilha/gravador.py`.
         """
+        if self.planilha is not None:
+            return self.planilha.bytes_para_salvar()
+
         texto = self.texto()
 
         if not self.termina_com_nova_linha:
@@ -575,6 +651,8 @@ class Documento(QObject):
         dados = self.bytes_para_salvar(substituir=substituir_incompativeis)
         self.assinatura = arquivos.gravar_conferindo(
             self.caminho, dados, self.assinatura, forcar=forcar)
+        if self.planilha is not None:
+            self.planilha.confirmar_gravacao(dados)
         self.qt.setModified(False)
         log.info("salvo %s (%d bytes, %s, %s)", self.caminho, len(dados),
                  codificacao.ROTULOS.get(self.codec, self.codec),
@@ -585,6 +663,9 @@ class Documento(QObject):
         alvo = pathlib.Path(caminho)
         dados = self.bytes_para_salvar(substituir=substituir_incompativeis)
         arquivos.gravar_atomico(alvo, dados)
+        if self.planilha is not None:
+            self.planilha.confirmar_gravacao(dados)
+            self.planilha.caminho = alvo
         self.caminho = alvo
         self.rotulo_sem_titulo = ""
         self.somente_leitura = False

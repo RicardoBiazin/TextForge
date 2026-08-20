@@ -2,7 +2,7 @@
 
 Editor de arquivos técnicos para Windows: `.txt` `.log` `.dat` `.csv` `.ini`
 `.json` `.xml` `.yaml` `.py` `.php` `.js` `.ts` `.html` `.css` `.sql` `.md`
-`.bat` `.ps1` `.sh` e o resto do que aparece no dia a dia.
+`.bat` `.ps1` `.sh` `.xlsx` e o resto do que aparece no dia a dia.
 
 Existe para o que o Bloco de Notas não faz e a IDE faz pesado demais: abrir um
 arquivo, olhar, procurar, corrigir e fechar — sem esperar indexação de projeto e
@@ -16,6 +16,9 @@ sem corromper a codificação no caminho.
   ausência de quebra final são **preservados** ao salvar.
 - não formata nada sozinho. Formatar é sempre uma ação sua.
 - não é editor de documentos. DOC e DOCX estão fora de escopo.
+- não é substituto do Excel. Planilha `.xlsx` abre numa grade e você edita o
+  **valor** das células — nada além disso. Formato, gráfico, tabela dinâmica e
+  macro não são editáveis aqui, e **sobrevivem intactos** ao salvar.
 
 ---
 
@@ -166,6 +169,22 @@ na margem, e pesquisa em pasta com filtros, em thread cancelável.
 **CSV em modo tabela.** Editar células numa grade e voltar para o texto. Sem
 edição, o texto volta **byte a byte idêntico** — inclusive aspas desnecessárias e
 espaços depois do delimitador.
+
+**Planilha `.xlsx` e `.xlsm` em grade.** Abas embaixo como no Excel, coordenadas
+`A1`, filtro e ordenação por coluna. A fórmula aparece como **fórmula** (o valor
+que o Excel calculou fica na dica de contexto), e a data aparece como data.
+
+O que faz esse recurso ser confiável está na gravação: o TextForge **nunca
+regrava a planilha**, ele aplica um patch nos bytes da aba editada e copia o
+resto do pacote como veio. Gráfico, imagem, tabela dinâmica, macro, formatação
+condicional e validação de dados sobrevivem porque nunca são tocados — o caminho
+óbvio (`openpyxl.load_workbook()` + `.save()`) descarta todos eles em silêncio.
+Sem edição nenhuma, salvar devolve o arquivo **byte a byte**.
+
+Fica de fora, e está escrito na tela quando esbarra: inserir ou remover linha e
+coluna no meio (deslocaria referências e fórmulas), editar formatação, e
+planilha protegida por senha ou `.xls` antigo — essas abrem em somente leitura
+com o motivo, em vez de gravar errado.
 
 **Arquivo grande.** Acima de 20 MB (ou com uma linha acima de 20 mil caracteres) o
 arquivo abre num visor virtualizado, somente leitura, com índice esparso construído

@@ -102,10 +102,11 @@ class ProvedorDeLinguagem(abc.ABC):
         return 0
 
     def visualizador_preferido(self) -> str:
-        """"texto" | "tabela" | "hex".
+        """"texto" | "tabela" | "hex" | "planilha".
 
         E' assim que o CSV pede o modo tabela sem que o gerenciador de abas
-        precise conhecer CSV.
+        precise conhecer CSV -- e que o .xlsx pede a grade da planilha sem que
+        ele precise conhecer OOXML.
         """
         return "texto"
 

@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (QApplication, QMenu, QStackedWidget, QTabBar,
                                QTabWidget, QToolButton, QVBoxLayout, QWidget)
 
 from textforge import arquivos, log_interno
-from textforge.documento import MODO_GRANDE, Documento
+from textforge.documento import MODO_GRANDE, MODO_PLANILHA, Documento
 from textforge.editor.widget import EditorDeTexto
 from textforge.realce.pintor import Pintor
 
@@ -88,6 +88,29 @@ class Aba(QWidget):
         self.indexador = None
         if documento.modo == MODO_GRANDE and documento.fonte_grande is not None:
             self._montar_arquivo_grande(cfg, tema)
+        elif documento.modo == MODO_PLANILHA and documento.planilha is not None:
+            self._montar_planilha(tema)
+
+    def _montar_planilha(self, tema) -> None:
+        """A grade da planilha, montada aqui pelo mesmo motivo que o modo grande.
+
+        Quem sabe que este documento nao e' texto e' o proprio documento; a
+        janela nao deve precisar perguntar antes de criar cada aba.
+
+        Nao ha' alternador Texto <-> Tabela: um .xlsx nao tem texto para o qual
+        voltar, e o `QTextDocument` deste documento fica vazio de proposito.
+        """
+        from textforge.visualizadores.planilha import VisualizadorPlanilha
+
+        painel = VisualizadorPlanilha(self.documento.planilha, self)
+        painel.aplicar_tema(tema)
+        # A edicao na grade marca o DOCUMENTO como modificado. Sem isto o titulo
+        # nao ganha o "*", e fechar a aba nao perguntaria nada -- as alteracoes
+        # sumiriam sem aviso.
+        painel.conteudo_mudou.connect(
+            lambda: self.documento.qt.setModified(True))
+        self.registrar_view("planilha", painel)
+        self.pilha.setCurrentWidget(painel)
 
     def _montar_arquivo_grande(self, cfg: dict, tema) -> None:
         from textforge.grande.indice import Indexador

@@ -439,7 +439,12 @@ checa(provedor is None, "JSON que nao e' objeto devolve None")
 secao("10 - visualizador preferido")
 
 for provedor in REGISTRO.todos():
-    checa(provedor.visualizador_preferido() in ("texto", "tabela", "hex"),
+    checa(provedor.visualizador_preferido() in ("texto", "tabela", "hex",
+                                                "planilha"),
           f"{provedor.nome}: visualizador preferido valido")
+
+checa(REGISTRO.por_nome("Planilha").visualizador_preferido() == "planilha",
+      "*** o .xlsx pede a grade, e nao o texto: sem isto ele cairia no "
+      "visualizador hexadecimal ***")
 
 sys.exit(resumir())

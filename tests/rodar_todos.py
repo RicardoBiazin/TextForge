@@ -76,6 +76,9 @@ SUITES = [
     # etapa 11 -- acompanhar log
     ("teste_tail.py", "leitura incremental, multibyte cortado, rotacao"),
 
+    # etapa 13 -- planilha
+    ("teste_xlsx.py", "xlsx: patch sem perder grafico/macro, tipos, recusas"),
+
     # etapa 12 -- extras, paleta e empacotamento
     ("teste_conversoes.py", "Base64/URL/HTML/JSON e o peso da codificacao"),
     ("teste_hash.py", "digests contra valores publicados, texto x arquivo"),

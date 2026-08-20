@@ -27,7 +27,7 @@ from textforge import (APP, AUTOR, LINKEDIN, VERSAO, arquivos, busca,
                        configuracao, log_interno, recursos,
                        sessao as sessao_mod)
 from textforge import busca_em_arquivos as bfa
-from textforge.documento import Documento
+from textforge.documento import MODO_PLANILHA, Documento
 from textforge.editor.indentacao import Indentacao
 from textforge.interface import acoes, dialogos
 from textforge.interface import tema as tema_mod
@@ -52,6 +52,7 @@ FILTRO_DE_ARQUIVOS = ";;".join([
     " *.go *.rs)",
     "Texto (*.txt *.log *.dat)",
     "Dados (*.csv *.json *.xml *.yaml *.yml)",
+    "Planilhas (*.xlsx *.xlsm)",
     "Configuracao (*.ini *.cfg *.conf *.env *.toml)",
     "Codigo (*.py *.php *.js *.ts *.html *.css *.sql *.java *.c *.cpp *.cs)",
     "Scripts (*.bat *.cmd *.ps1 *.sh)",
@@ -209,6 +210,14 @@ class JanelaPrincipal(QMainWindow):
                 metodo()
                 return
 
+        if view == "planilha":
+            # A planilha nao tem modo texto para o qual voltar -- mandar o
+            # usuario "voltar para o texto" seria mandar para um lugar que nao
+            # existe. A edicao aqui e' na propria celula.
+            self.barra.showMessage(
+                "Este comando e' do editor de texto. Numa planilha, edite "
+                "clicando na celula.", 4000)
+            return
         if getattr(widget, "editavel", True):
             # A tabela do CSV E' editavel, mas nao pelos comandos do editor de
             # texto: ela tem os proprios botoes de linha e coluna.
@@ -682,6 +691,17 @@ class JanelaPrincipal(QMainWindow):
             else:
                 self.vigia.acompanhar(doc.caminho, doc.assinatura)
             configuracao.registrar_recente(self.cfg, doc.caminho)
+        if doc.modo == MODO_PLANILHA and doc.planilha is not None:
+            # Dizer o que SOBREVIVE e' o ponto: o usuario que abre um relatorio
+            # com graficos precisa saber, antes de editar, que salvar aqui nao
+            # vai come-los. Ver `planilha/gravador.py`.
+            preservado = (f" Grafico, macro e formatacao seguem intactos "
+                          f"({', '.join(doc.planilha.preservadas)})."
+                          if doc.planilha.preservadas else "")
+            self.barra.showMessage(
+                f"{doc.nome}: {len(doc.planilha.folhas)} aba(s)."
+                f"{preservado}"
+                f"{' ' + doc.aviso if doc.aviso else ''}", 9000)
         if doc.binario:
             dialogos.avisar(
                 self, f"{doc.nome}: {doc.aviso}",
@@ -892,6 +912,11 @@ class JanelaPrincipal(QMainWindow):
         doc = self.abas.documento_atual()
         if doc is None:
             return
+        if doc.modo == MODO_PLANILHA:
+            dialogos.avisar(self, "Uma planilha nao tem codificacao para trocar.",
+                            "O XML de dentro do pacote .xlsx e' sempre UTF-8, e "
+                            "quem declara isso e' o proprio arquivo.")
+            return
         rotulos = [r for _, r in codificacao.OFERECIDAS]
         escolha = dialogos.escolher(self, "Converter codificacao",
                                     "Gravar este arquivo em:", rotulos)
@@ -913,7 +938,7 @@ class JanelaPrincipal(QMainWindow):
 
     def definir_eol(self, fim_de_linha: str) -> None:
         doc = self.abas.documento_atual()
-        if doc is not None:
+        if doc is not None and doc.modo != MODO_PLANILHA:
             doc.definir_fim_de_linha(fim_de_linha)
             self._mostrar_metadados()
 
@@ -939,6 +964,20 @@ class JanelaPrincipal(QMainWindow):
         if doc is None:
             self.barra.limpar()
             return
+        if doc.modo == MODO_PLANILHA:
+            # Codificacao, fim de linha e indentacao nao existem num .xlsx.
+            # Mostrar "UTF-8 / CRLF / Espacos: 4" seria inventar tres metadados
+            # que o arquivo nao tem -- e o usuario acreditaria neles.
+            for definir in (self.barra.definir_codificacao,
+                            self.barra.definir_fim_de_linha):
+                definir("—")
+            self.barra.definir_indentacao(True, 0)
+            self.barra.definir_linguagem(doc.nome_da_linguagem)
+            self.barra.definir_aviso(doc.aviso)
+            self.barra.definir_visualizador("planilha", disponivel=False)
+            self._atualizar_titulo()
+            return
+
         perfil = doc.perfil
         self.barra.definir_codificacao(
             perfil.rotulo if perfil else codificacao.ROTULOS.get(doc.codec,
@@ -1241,7 +1280,14 @@ class JanelaPrincipal(QMainWindow):
         registros por tecla e' inviavel.
         """
         aba = aba if aba is not None else self.abas.aba_atual()
-        if aba is None or aba.view_atual() != "tabela":
+        if aba is None:
+            return
+        if aba.view_atual() == "planilha":
+            # Nada a sincronizar: o modelo da grade escreve DIRETO na `Pasta`, e
+            # e' a `Pasta` que `Documento.bytes_para_salvar` consulta. Nao ha'
+            # texto intermediario, entao nao ha' o que trazer de volta.
+            return
+        if aba.view_atual() != "tabela":
             return
         vista = aba.view("tabela")
         if vista is None or not vista.alterado:

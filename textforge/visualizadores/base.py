@@ -39,3 +39,32 @@ class Visualizador(Protocol):
 
     def aplicar_tema(self, tema) -> None:
         """Pinta com as cores do tema, pedidas por NOME."""
+
+
+@runtime_checkable
+class VisualizadorBinario(Protocol):
+    """A mesma ideia, para o conteudo que NAO e' texto.
+
+    A planilha e' o primeiro caso: um `.xlsx` e' um pacote ZIP, e nao ha' texto
+    para o qual voltar -- o `QTextDocument` da aba fica vazio e quem tem o
+    conteudo e' o visualizador. Por isso `para_bytes()` no lugar de
+    `para_texto()`, e por isso a aba nao oferece o alternador Texto <-> Tabela.
+
+    A garantia central e' a MESMA, so' que um nivel abaixo: **sem edicao,
+    `para_bytes()` devolve os bytes de entrada identicos** -- nem sequer
+    recomprimidos. Um visualizador que remonta o arquivo a partir da propria
+    estrutura interna perde tudo o que ele nao entendeu (num `.xlsx`: graficos,
+    macros, tabelas dinamicas), e faz isso so' por ter sido aberto.
+    """
+
+    editavel: bool
+
+    def para_bytes(self) -> bytes:
+        """O conteudo de volta. Sem edicao, identico a' entrada."""
+
+    @property
+    def alterado(self) -> bool:
+        """Houve edicao desde a criacao?"""
+
+    def aplicar_tema(self, tema) -> None:
+        """Pinta com as cores do tema, pedidas por NOME."""

@@ -150,8 +150,9 @@ def _autoverificar(janela, log) -> int:
         "PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets",
         "PySide6.QtNetwork",       # QLocalServer: instancia unica e "Abrir com"
         "charset_normalizer",      # deteccao de encoding
+        "openpyxl",                # leitura de .xlsx (import tardio)
         "json", "csv", "mmap", "codecs", "unicodedata", "hashlib", "base64",
-        "urllib.parse", "html", "sqlparse",
+        "urllib.parse", "html", "sqlparse", "zipfile",
         "xml.parsers.expat", "xml.etree.ElementTree",
     ) if importlib.util.find_spec(nome) is None]
 
