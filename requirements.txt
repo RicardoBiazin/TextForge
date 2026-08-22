@@ -10,29 +10,30 @@
 # corromper node_modules com TAR_ENTRY_ERROR/EBADF.
 #
 # Instalar:  .venv\Scripts\python.exe -m pip install -r requirements.txt
+# VERSOES FIXAS (21/08/2026). Antes eram faixas, e faixa nao e' consultavel: o
+# OSV precisa de versao concreta para dizer se ha' CVE. Um requirements sem pino
+# faz o relatorio de seguranca dizer "0 CVE" quando nada foi medido. Os valores
+# abaixo sao os que o .venv deste projeto ja' usava -- aquilo contra o que o
+# codigo foi de fato exercitado. Ao subir, rode os testes e `raptor-win --sca`.
 
 # Interface grafica. LGPLv3, compativel com o MIT deste projeto.
 # NAO usar o metapacote 'PySide6': ele arrasta PySide6-Addons, um wheel de
 # 169 MB com QtWebEngine, Qt3D, Charts e Multimedia que nao usamos.
 # -Essentials sao ~78 MB e trazem QtCore, QtGui, QtWidgets e QtNetwork.
 # PyQt6 e QScintilla estao FORA: sao GPL da Riverbank e contaminariam a licenca.
-PySide6-Essentials>=6.9,<7
-
+PySide6-Essentials==6.11.1
 # Deteccao de encoding. MIT, ao contrario do chardet (LGPL) -- dependencia MIT
 # e' mais limpa num projeto MIT. Puro Python, entao nao atrapalha o PyInstaller.
-charset-normalizer>=3.4,<4
-
+charset-normalizer==3.5.1
 # Formatar/identar SQL. Puro Python, ~200 KB. Import tardio.
-sqlparse>=0.5,<1
-
+sqlparse==0.6.0
 # LER .xlsx. MIT, puro Python, ~250 KB (mais et_xmlfile, ~18 KB). Import tardio,
 # so' quando uma planilha e' aberta. NAO arrasta pandas nem numpy -- os dois
 # continuam nos `excludes` do .spec, e ha' teste garantindo isso.
 # Usado SOMENTE para leitura: a gravacao e' patch nos bytes do proprio pacote
 # ZIP, porque `openpyxl.save()` descarta graficos, tabelas dinamicas e macros.
 # Ver o docstring de textforge/planilha/__init__.py.
-openpyxl>=3.1,<4
-
+openpyxl==3.1.5
 # Empacotamento. So' de desenvolvimento; nao vai dentro do .exe. A licenca tem
 # excecao explicita: o binario gerado nao vira GPL.
-pyinstaller>=6.16,<7
+pyinstaller==6.22.2
