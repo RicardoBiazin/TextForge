@@ -502,6 +502,19 @@ class Documento(QObject):
         self.metadados_mudaram.emit()
 
     @property
+    def rotulo_da_codificacao(self) -> str:
+        """Como este documento SERA' GRAVADO. E' o que vai na barra de status.
+
+        Deriva de `codec` e `bom`, e nao de `perfil`. O perfil registra como o
+        arquivo foi LIDO, e depois de "Converter codificacao" os dois divergem de
+        proposito. Mostrar o perfil ali fazia a barra exibir a codificacao de
+        origem para sempre: a conversao acontecia, o arquivo era gravado
+        convertido, e nada na tela mudava -- o usuario so' podia concluir que o
+        comando nao funcionava.
+        """
+        return codificacao.rotular(self.codec, self.bom)
+
+    @property
     def nome_da_linguagem(self) -> str:
         return self.provedor.nome if self.provedor is not None else "Texto"
 

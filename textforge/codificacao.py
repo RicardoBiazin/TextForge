@@ -168,6 +168,25 @@ SEPARADOR_DE_PARAGRAFO = " "
 # ---------------------------------------------------------------------------
 
 
+def rotular(codec: str, bom: bytes = b"") -> str:
+    """Como um par (codec, BOM) aparece na barra de status.
+
+    Mora aqui, e nao dentro do `Perfil`, porque quem pergunta sao DOIS: o perfil,
+    que descreve como o arquivo foi LIDO, e o documento, que descreve como ele
+    sera' GRAVADO. Depois de "Converter codificacao" os dois divergem -- e a barra
+    de status tem de mostrar o segundo. Duplicar a regra do BOM nos dois lugares
+    ja' produziu exatamente esse defeito: a conversao funcionava, o arquivo saia
+    convertido, e o rotulo continuava mostrando a codificacao de origem.
+
+    O BOM de UTF-8 e' o unico caso especial: o codec continua sendo "utf-8" (a
+    presenca do BOM mora em `bom`, como bytes literais), entao sem esta linha
+    "UTF-8 BOM" e "UTF-8" apareceriam iguais.
+    """
+    if bom == codecs.BOM_UTF8:
+        return "UTF-8 BOM"
+    return ROTULOS.get(codec, codec.upper())
+
+
 @dataclass
 class Perfil:
     """O que a deteccao descobriu sobre um arquivo."""
@@ -184,9 +203,7 @@ class Perfil:
     @property
     def rotulo(self) -> str:
         """Como a codificacao aparece na barra de status."""
-        if self.bom == codecs.BOM_UTF8:
-            return "UTF-8 BOM"
-        return ROTULOS.get(self.codec, self.codec.upper())
+        return rotular(self.codec, self.bom)
 
     @property
     def suspeito(self) -> bool:

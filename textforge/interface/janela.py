@@ -978,11 +978,13 @@ class JanelaPrincipal(QMainWindow):
             self._atualizar_titulo()
             return
 
-        perfil = doc.perfil
+        # O rotulo vem do DOCUMENTO (como sera' gravado), e a suspeita vem do
+        # PERFIL (como foi lido). Sao coisas diferentes e divergem depois de uma
+        # conversao de codificacao -- tirar as duas do perfil fazia a barra
+        # ignorar a conversao por completo.
         self.barra.definir_codificacao(
-            perfil.rotulo if perfil else codificacao.ROTULOS.get(doc.codec,
-                                                                 doc.codec),
-            suspeita=bool(perfil and perfil.suspeito))
+            doc.rotulo_da_codificacao,
+            suspeita=bool(doc.perfil and doc.perfil.suspeito))
         self.barra.definir_fim_de_linha(
             codificacao.ROTULO_EOL.get(doc.fim_de_linha, "CRLF"),
             misto=doc.fins_de_linha_mistos)

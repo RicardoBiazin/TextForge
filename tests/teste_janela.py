@@ -677,6 +677,46 @@ with appdata_temporario():
         checa(not quarta.doca_problemas.isHidden(),
               "e o painel Problemas explica por que")
 
+        # ------------------------------------------------------------------
+        secao("13 - converter codificacao APARECE na barra de status")
+
+        # Regressao. A conversao sempre funcionou no disco, mas a barra lia
+        # `doc.perfil.rotulo` -- o registro de como o arquivo foi LIDO --, que
+        # nunca muda. O rotulo continuava dizendo "Windows-1252" depois de
+        # converter para UTF-8, e sem nenhum retorno na tela a unica conclusao
+        # possivel para o usuario era que o comando nao fazia nada.
+        TEXTO_COM_ACENTO = "Ação e Coração\n"
+
+        acentos = tmp / "acentos.txt"
+        acentos.write_bytes(TEXTO_COM_ACENTO.encode("cp1252"))
+        checa(quarta.abrir_arquivo(str(acentos)), "abre um arquivo cp1252")
+        doc_conv = quarta.documento
+        checa_igual(quarta.barra._codificacao.text(), "Windows-1252",
+                    "a barra mostra a codificacao detectada na leitura")
+
+        doc_conv.definir_codificacao("utf-8", com_bom=False)
+        quarta._mostrar_metadados()
+        checa_igual(quarta.barra._codificacao.text(), "UTF-8",
+                    "*** depois de converter, a BARRA muda -- e' a unica prova "
+                    "que o usuario tem de que o comando funcionou ***")
+
+        doc_conv.definir_codificacao("utf-8", com_bom=True)
+        quarta._mostrar_metadados()
+        checa_igual(quarta.barra._codificacao.text(), "UTF-8 BOM",
+                    "e o BOM se distingue do UTF-8 sem BOM")
+
+        # E o disco tem de concordar com o que a barra diz.
+        doc_conv.definir_codificacao("utf-8", com_bom=False)
+        doc_conv.salvar()
+        checa_igual(acentos.read_bytes(), TEXTO_COM_ACENTO.encode("utf-8"),
+                    "*** e o arquivo no disco esta' de fato em UTF-8: o rotulo "
+                    "nao pode passar a mentir na direcao contraria ***")
+
+        # O perfil continua contando como o arquivo foi LIDO -- e' o que o
+        # dialogo Propriedades mostra, e nao deve ser sobrescrito.
+        checa_igual(doc_conv.perfil.codec, "cp1252",
+                    "o perfil da LEITURA e' preservado, e nao reescrito")
+
         for aba in quarta.abas.abas():
             aba.documento.qt.setModified(False)
         quarta.close()
