@@ -418,6 +418,16 @@ def testar_documento() -> None:
 
         depois = alvo.read_bytes()
         checa(depois != antes, "o arquivo mudou no disco")
+
+        # Ctrl+S sem ter editado nada NAO pode reescrever o arquivo. Foi um
+        # teste com o executavel de verdade que pegou isto: salvar logo depois
+        # de habilitar a edicao regravava 40 MB e registrava "0 edicoes".
+        marca = alvo.stat().st_mtime_ns
+        doc.salvar()
+        checa_igual(alvo.stat().st_mtime_ns, marca,
+                    "*** salvar sem edicao pendente nao toca no arquivo: "
+                    "reescrever 240 MB a toa mexeria ate' na data, e o backup "
+                    "acharia que o arquivo mudou ***")
         checa(b"SETE EDITADA" in depois, "com o texto novo")
         checa_igual(len(depois.split(b"\n")), len(antes.split(b"\n")),
                     "e o numero de linhas nao mudou")

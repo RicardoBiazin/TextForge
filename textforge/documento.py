@@ -447,6 +447,15 @@ class Documento(QObject):
         fonte = self.fonte_grande
         if fonte is None or not fonte.editavel():
             raise PermissionError("a edicao nao esta' habilitada neste arquivo")
+        if not fonte.alterado and alvo == self.caminho:
+            # Salvar sem ter editado nada NAO reescreve o arquivo. Num arquivo
+            # de texto comum regravar por regravar custa milissegundos; aqui
+            # custa minutos de escrita, o espaco do temporario, e ainda mexe na
+            # data de modificacao -- o que faz o backup e o sincronizador
+            # acharem que o arquivo mudou. Ctrl+S vira um no-op honesto.
+            log.info("nada a gravar em %s (nenhuma edicao pendente)", alvo)
+            self.qt.setModified(False)
+            return
         if not fonte.indexacao_completa:
             raise PermissionError(
                 "o arquivo ainda esta' sendo indexado. Salvar antes do fim "
