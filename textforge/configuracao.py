@@ -140,7 +140,9 @@ def padrao() -> dict[str, Any]:
         "recuperacao_pastas_excluidas": [],
 
         # -- limites (ver 'Gargalo real' no plano) --------------------------
-        # Acima disto o arquivo abre no visor de arquivo grande, somente leitura.
+        # Acima disto o arquivo abre no visor de arquivo grande. Ele abre
+        # somente leitura, e a edicao por linha e' habilitada pelo botao da
+        # infobar -- ver `grande/edicao.py`.
         "limite_texto_mb": 20,
         # Uma unica linha maior que isto tambem manda para o visor: o
         # QTextLayout e' quadratico dentro de um bloco, e um JS minificado de
@@ -154,6 +156,12 @@ def padrao() -> dict[str, Any]:
         # Confirmar antes de copiar uma selecao gigante para a area de
         # transferencia: copiar 500 MB pode derrubar a sessao do Windows.
         "limite_copia_mb": 64,
+        # Planilha: acima deste tamanho o .xlsx nao entra em modo planilha, e
+        # acima deste numero de celulas ele abre somente leitura. As duas eram
+        # lidas com valor padrao embutido e nao apareciam aqui -- toda outra
+        # chave de limite e' visivel no config.json, e estas passam a ser.
+        "limite_planilha_mb": 100,
+        "limite_celulas_planilha": 500000,
 
         # -- acompanhar log / tail (requisito 26) ---------------------------
         # De quanto em quanto tempo o acompanhador consulta o arquivo. 500 ms e'

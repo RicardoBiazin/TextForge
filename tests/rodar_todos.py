@@ -76,6 +76,10 @@ SUITES = [
     # etapa 11 -- acompanhar log
     ("teste_tail.py", "leitura incremental, multibyte cortado, rotacao"),
 
+    # etapa 14 -- edicao de arquivo grande
+    ("teste_edicao_grande.py",
+     "trechos sobre mmap, gravacao por streaming, memoria O(edicoes)"),
+
     # etapa 13 -- planilha
     ("teste_xlsx.py", "xlsx: patch sem perder grafico/macro, tipos, recusas"),
 

@@ -128,6 +128,51 @@ class Aba(QWidget):
         self.indexador.concluido.connect(self._ao_terminar_indice)
         painel.visor.linha_atual_mudou.connect(
             lambda n: self.posicao_no_visor.emit(n, 0))
+        painel.edicao_pedida.connect(self._habilitar_edicao_grande)
+        # Editar marca o DOCUMENTO como modificado. Sem isto o titulo nao ganha
+        # o "*" e fechar a aba nao perguntaria nada -- as alteracoes sumiriam
+        # sem aviso. E' o mesmo arranjo da grade da planilha.
+        painel.visor.conteudo_mudou.connect(
+            lambda: self.documento.qt.setModified(True))
+        self.documento.arquivo_grande_regravado.connect(
+            self._reiniciar_indexacao)
+        self.indexador.iniciar()
+
+    def _habilitar_edicao_grande(self) -> None:
+        """O clique em "Habilitar edicao" na infobar."""
+        if not self.documento.habilitar_edicao_grande():
+            return
+        painel = self.view("grande")
+        if painel is not None:
+            # O visor passa a falar com a `FonteEditavel`, e nao mais com a
+            # `FonteDeArquivo` crua. O `Indexador` continua com a de dentro.
+            painel.visor.fonte = self.documento.fonte_grande
+            painel.atualizar_aviso()
+            painel.visor.setFocus()
+
+    def _reiniciar_indexacao(self) -> None:
+        """Depois de gravar, o mmap e o indice sao outros: reindexa.
+
+        A gravacao troca o arquivo por um novo e reabre a `FonteDeArquivo`. O
+        indexador antigo aponta para o mmap fechado, entao ele e' descartado e um
+        novo comeca -- com a mesma barra de progresso da abertura.
+        """
+        from textforge.grande.indice import Indexador
+
+        if self.indexador is not None:
+            self.indexador.parar(fechar=False)
+            self.indexador = None
+        fonte = self.documento.fonte_grande
+        if fonte is None:
+            return
+        interna = getattr(fonte, "fonte", fonte)
+        self.indexador = Indexador(interna, self)
+        self.indexador.progresso.connect(self._ao_indexar)
+        self.indexador.concluido.connect(self._ao_terminar_indice)
+        painel = self.view("grande")
+        if painel is not None:
+            painel.visor.fonte = fonte
+            painel.atualizar_barras()
         self.indexador.iniciar()
 
     def _ao_indexar(self, varrido: int, total: int) -> None:

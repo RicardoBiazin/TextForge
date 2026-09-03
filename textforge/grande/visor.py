@@ -37,8 +37,8 @@ from PySide6.QtCore import QRect, Qt, Signal
 from PySide6.QtGui import (QColor, QFont, QFontMetrics, QKeyEvent, QPainter,
                            QPaintEvent, QResizeEvent)
 from PySide6.QtWidgets import (QAbstractScrollArea, QApplication, QHBoxLayout,
-                               QLabel, QSizePolicy, QToolButton, QVBoxLayout,
-                               QWidget)
+                               QLabel, QLineEdit, QSizePolicy, QToolButton,
+                               QVBoxLayout, QWidget)
 
 from textforge import log_interno
 from textforge.fonte import FonteDeArquivo
@@ -88,6 +88,8 @@ class VisorDeArquivoGrande(QAbstractScrollArea):
 
     #: linha atual, em BASE ZERO (a convencao do nucleo -- ver `fonte.py`).
     linha_atual_mudou = Signal(int)
+    #: uma linha foi editada, inserida ou removida.
+    conteudo_mudou = Signal()
 
     def __init__(self, fonte: FonteDeArquivo, cfg: dict, tema,
                  parent: QWidget | None = None) -> None:
@@ -105,13 +107,16 @@ class VisorDeArquivoGrande(QAbstractScrollArea):
         # global -- e' o que permite ter as duas selecoes sem uma apagar a outra.
         self._coluna_ancora: int | None = None
         self._coluna_cursor: int = 0
+        # O campo de edicao sobreposto. So' existe enquanto uma linha esta'
+        # sendo editada -- criar e destruir e' mais barato que manter um
+        # QLineEdit vivo por cima de um arquivo que o usuario so' quer ler.
+        self._campo: QLineEdit | None = None
+        self._linha_em_edicao = -1
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
-        self.verticalScrollBar().valueChanged.connect(
-            lambda _v: self.viewport().update())
-        self.horizontalScrollBar().valueChanged.connect(
-            lambda _v: self.viewport().update())
+        self.verticalScrollBar().valueChanged.connect(self._ao_rolar)
+        self.horizontalScrollBar().valueChanged.connect(self._ao_rolar)
 
         self.aplicar_configuracao(cfg)
         self.aplicar_tema(tema)
@@ -173,9 +178,14 @@ class VisorDeArquivoGrande(QAbstractScrollArea):
         horizontal.setPageStep(max(1, util))
         horizontal.setSingleStep(self._largura_do_digito * 4)
 
+    def _ao_rolar(self, _valor: int = 0) -> None:
+        self._posicionar_campo()
+        self.viewport().update()
+
     def resizeEvent(self, evento: QResizeEvent) -> None:      # noqa: N802 - Qt
         super().resizeEvent(evento)
         self.atualizar_barras()
+        self._posicionar_campo()
 
     # ==================================================================
     # Navegacao
@@ -301,6 +311,171 @@ class VisorDeArquivoGrande(QAbstractScrollArea):
         self.viewport().update()
 
     # ==================================================================
+    # Edicao por linha
+    # ==================================================================
+
+    @property
+    def editavel(self) -> bool:
+        """A fonte aceita escrita? So' depois de "Habilitar edicao"."""
+        return bool(self.fonte.editavel())
+
+    @property
+    def editando(self) -> bool:
+        return self._campo is not None
+
+    def editar_linha(self, n: int | None = None) -> bool:
+        """Abre o campo sobreposto na linha `n` (ou na atual).
+
+        O campo e' um `QLineEdit` de verdade, e nao um cursor desenhado a mao: e'
+        o Qt que cuida de caret, selecao, area de transferencia e -- o que mais
+        importa num editor brasileiro -- de tecla morta e acentuacao. Reescrever
+        isso a mao e' justamente o custo que a edicao por linha existe para evitar.
+        """
+        if not self.editavel or self._campo is not None:
+            return self._campo is not None
+        alvo = self._linha_atual if n is None else n
+        if not 0 <= alvo < self.fonte.total_de_linhas():
+            return False
+
+        self.ir_para_linha(alvo)
+        self._linha_em_edicao = alvo
+        campo = QLineEdit(self.viewport())
+        campo.setFont(self.font())
+        campo.setText(self.fonte.linha(alvo))
+        campo.setFrame(False)
+        campo.returnPressed.connect(self.confirmar_edicao)
+        campo.installEventFilter(self)
+        self._campo = campo
+        self._posicionar_campo()
+        campo.show()
+        campo.setFocus()
+        campo.selectAll()
+        return True
+
+    def _posicionar_campo(self) -> None:
+        """Cola o campo exatamente sobre a linha, com a metrica da pintura.
+
+        Reaproveita `_largura_da_margem`, `_altura_da_linha` e o deslocamento
+        horizontal que o `paintEvent` ja' usa -- e' o que faz o texto do campo
+        cair sobre o texto que ele substitui, sem salto de um pixel ao abrir.
+        """
+        if self._campo is None:
+            return
+        topo = ((self._linha_em_edicao - self.verticalScrollBar().value())
+                * self._altura_da_linha)
+        margem = self._largura_da_margem()
+        self._campo.setGeometry(QRect(
+            margem, topo, max(50, self.viewport().width() - margem),
+            self._altura_da_linha))
+        # A linha pode ter saido da tela numa rolagem. Esconder e' melhor que
+        # deixar o campo flutuando sobre outra linha, editando a errada.
+        self._campo.setVisible(0 <= topo < self.viewport().height())
+
+    def confirmar_edicao(self) -> bool:
+        """Aplica o que esta' no campo e o fecha. False se nada mudou."""
+        if self._campo is None:
+            return False
+        texto = self._campo.text()
+        linha = self._linha_em_edicao
+        self._fechar_campo()
+        mudou = bool(self.fonte.substituir(linha, texto))
+        if mudou:
+            self.conteudo_mudou.emit()
+        self.viewport().update()
+        return mudou
+
+    def cancelar_edicao(self) -> None:
+        """Fecha o campo SEM aplicar. O Esc de sempre."""
+        self._fechar_campo()
+        self.viewport().update()
+
+    def _fechar_campo(self) -> None:
+        if self._campo is None:
+            return
+        campo, self._campo = self._campo, None
+        self._linha_em_edicao = -1
+        campo.removeEventFilter(self)
+        campo.hide()
+        campo.deleteLater()
+        self.setFocus()
+
+    def eventFilter(self, objeto, evento):                    # noqa: N802 - Qt
+        """Esc cancela no campo, em vez de subir para a janela.
+
+        Sem isto o Esc fecharia o painel de busca e a edicao continuaria aberta
+        por cima: o gesto universal de "deixa pra la" tem de chegar primeiro em
+        quem esta' com o foco.
+        """
+        from PySide6.QtCore import QEvent
+        if objeto is self._campo:
+            if (evento.type() == QEvent.Type.KeyPress
+                    and evento.key() == Qt.Key.Key_Escape):
+                self.cancelar_edicao()
+                return True
+            if evento.type() == QEvent.Type.FocusOut:
+                # Clicar fora CONFIRMA, como a grade do CSV. Descartar o que foi
+                # digitado por um clique acidental seria perder trabalho em
+                # silencio, que e' o que este projeto nunca faz.
+                self.confirmar_edicao()
+                return False
+        return super().eventFilter(objeto, evento)
+
+    # -- operacoes de linha ------------------------------------------------
+
+    def inserir_linha(self, abaixo: bool = True) -> bool:
+        if not self.editavel:
+            return False
+        self.confirmar_edicao()
+        alvo = self._linha_atual + (1 if abaixo else 0)
+        self.fonte.inserir(alvo, "")
+        self.conteudo_mudou.emit()
+        self.atualizar_barras()
+        self.ir_para_linha(alvo)
+        self.editar_linha(alvo)
+        return True
+
+    def remover_linha(self) -> bool:
+        if not self.editavel or self.fonte.total_de_linhas() <= 0:
+            return False
+        self.cancelar_edicao()
+        self.fonte.remover(self._linha_atual)
+        self.conteudo_mudou.emit()
+        self.atualizar_barras()
+        self.ir_para_linha(min(self._linha_atual,
+                               max(0, self.fonte.total_de_linhas() - 1)))
+        return True
+
+    def duplicar_linha(self) -> bool:
+        if not self.editavel:
+            return False
+        self.confirmar_edicao()
+        self.fonte.duplicar(self._linha_atual)
+        self.conteudo_mudou.emit()
+        self.atualizar_barras()
+        self.viewport().update()
+        return True
+
+    def desfazer(self) -> bool:
+        if not self.editavel or not self.fonte.pode_desfazer:
+            return False
+        self.cancelar_edicao()
+        self.fonte.desfazer()
+        self.conteudo_mudou.emit()
+        self.atualizar_barras()
+        self.viewport().update()
+        return True
+
+    def refazer(self) -> bool:
+        if not self.editavel or not self.fonte.pode_refazer:
+            return False
+        self.cancelar_edicao()
+        self.fonte.refazer()
+        self.conteudo_mudou.emit()
+        self.atualizar_barras()
+        self.viewport().update()
+        return True
+
+    # ==================================================================
     # Teclado e mouse
     # ==================================================================
 
@@ -332,7 +507,16 @@ class VisorDeArquivoGrande(QAbstractScrollArea):
             evento.accept()
             return
 
-        if tecla == Qt.Key.Key_Escape and self._coluna_ancora is not None:
+        if (ctrl and tecla in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and self.editavel):
+            # Ctrl+Enter insere uma linha abaixo e ja' abre o campo nela:
+            # e' o gesto de "acrescentar um registro aqui" num passo so'.
+            self.inserir_linha()
+        elif tecla in (Qt.Key.Key_F2, Qt.Key.Key_Return,
+                       Qt.Key.Key_Enter) \
+                and self.editavel and not ctrl and not alt:
+            self.editar_linha()
+        elif tecla == Qt.Key.Key_Escape and self._coluna_ancora is not None:
             self._coluna_ancora = None
             self.viewport().update()
         elif ctrl and tecla == Qt.Key.Key_C:
@@ -377,6 +561,15 @@ class VisorDeArquivoGrande(QAbstractScrollArea):
                 alvo, estender=bool(evento.modifiers()
                                     & Qt.KeyboardModifier.ShiftModifier))
         self.setFocus()
+
+    def mouseDoubleClickEvent(self, evento) -> None:          # noqa: N802 - Qt
+        if evento.button() == Qt.MouseButton.LeftButton and self.editavel:
+            ponto = evento.position()
+            alvo = (self.verticalScrollBar().value()
+                    + int(ponto.y()) // self._altura_da_linha)
+            self.editar_linha(alvo)
+            return
+        super().mouseDoubleClickEvent(evento)
 
     def mouseMoveEvent(self, evento) -> None:                 # noqa: N802 - Qt
         if not (evento.buttons() & Qt.MouseButton.LeftButton):
@@ -515,7 +708,10 @@ class PainelDeArquivoGrande(QWidget):
     fechada pelo usuario sem que isso mexa em nada da rolagem.
     """
 
-    editavel = False                    # ver visualizadores/base.py
+    #: Emitido quando o usuario clica em "Habilitar edicao". Quem troca a fonte
+    #: por uma `FonteEditavel` e' o `Documento`, que e' o dono dela -- o painel
+    #: so' pede.
+    edicao_pedida = Signal()
 
     def __init__(self, fonte: FonteDeArquivo, cfg: dict, tema,
                  parent: QWidget | None = None) -> None:
@@ -527,6 +723,18 @@ class PainelDeArquivoGrande(QWidget):
         self.aviso.setSizePolicy(QSizePolicy.Policy.Expanding,
                                  QSizePolicy.Policy.Minimum)
 
+        # A edicao e' um ATO do usuario, e nao o estado inicial. Um log de
+        # producao de 240 MB aberto para consulta nao pode virar editavel por
+        # uma tecla distraida; e a regra do projeto e' nunca alterar arquivo sem
+        # que alguem tenha pedido.
+        self.botao_editar = QToolButton(self)
+        self.botao_editar.setText("Habilitar edicao")
+        self.botao_editar.setToolTip(
+            "Permite editar linha a linha (F2). O arquivo continua fora da "
+            "memoria: so' as linhas alteradas ficam na RAM.")
+        self.botao_editar.setAutoRaise(True)
+        self.botao_editar.clicked.connect(self.edicao_pedida)
+
         fechar = QToolButton(self)
         fechar.setText("×")
         fechar.setToolTip("Ocultar este aviso")
@@ -537,6 +745,7 @@ class PainelDeArquivoGrande(QWidget):
         linha = QHBoxLayout(self.barra)
         linha.setContentsMargins(8, 4, 4, 4)
         linha.addWidget(self.aviso, 1)
+        linha.addWidget(self.botao_editar)
         linha.addWidget(fechar)
         fechar.clicked.connect(self.barra.hide)
 
@@ -548,21 +757,38 @@ class PainelDeArquivoGrande(QWidget):
 
         self.aplicar_tema(tema)
 
+    @property
+    def editavel(self) -> bool:               # ver visualizadores/base.py
+        """Deixa de ser constante: agora depende de a edicao ter sido pedida."""
+        return self.visor.editavel
+
+    def atualizar_aviso(self) -> None:
+        """Refaz a infobar depois de a edicao ser habilitada."""
+        self.aviso.setText(self._texto_do_aviso(self.visor.fonte))
+        self.botao_editar.setVisible(not self.editavel)
+        self.barra.show()
+
     @staticmethod
-    def _texto_do_aviso(fonte: FonteDeArquivo) -> str:
+    def _texto_do_aviso(fonte) -> str:
         """Diz o que esta' desligado E POR QUE.
 
-        Uma infobar que so' anuncia "modo somente leitura" deixa o usuario
-        procurando o menu que ligaria a edicao. Dizer o motivo e o que CONTINUA
-        funcionando e' a diferenca entre um aviso e um obstaculo.
+        Uma infobar que so' anuncia "somente leitura" deixa o usuario procurando
+        o menu que ligaria a edicao. Dizer o motivo, o que CONTINUA funcionando e
+        onde fica o botao e' a diferenca entre um aviso e um obstaculo.
         """
         mb = fonte.tamanho_em_bytes() / (1024 * 1024)
-        return (f"<b>Modo de arquivo grande</b> ({mb:,.0f} MB) — somente leitura. "
-                "Edicao, realce de sintaxe, painel Estrutura e minimapa estao "
-                "desligados: manter um arquivo deste tamanho na memoria consumiria "
-                "varios GB de RAM. Rolar, <b>Ir para linha</b>, <b>Pesquisar</b> e "
-                "copiar continuam funcionando."
-                .replace(",", "."))
+        cabeca = f"<b>Modo de arquivo grande</b> ({mb:,.0f} MB) — ".replace(",", ".")
+        if fonte.editavel():
+            return (cabeca + "<b>edicao por linha ativa</b>. <b>F2</b> ou duplo "
+                    "clique edita a linha; <b>Ctrl+Enter</b> insere; "
+                    "<b>Ctrl+D</b> duplica; <b>Ctrl+Z</b> desfaz. Realce de sintaxe, painel Estrutura e minimapa "
+                    "seguem desligados, e o arquivo continua fora da memoria: "
+                    "so' as linhas alteradas ficam na RAM.")
+        return (cabeca + "somente leitura. Edicao, realce de sintaxe, painel "
+                "Estrutura e minimapa estao desligados: manter um arquivo deste "
+                "tamanho na memoria consumiria varios GB de RAM. Rolar, "
+                "<b>Ir para linha</b>, <b>Pesquisar</b> e copiar continuam "
+                "funcionando.")
 
     # -- repasses ----------------------------------------------------------
 
@@ -570,8 +796,39 @@ class PainelDeArquivoGrande(QWidget):
     def fonte(self) -> FonteDeArquivo:
         return self.visor.fonte
 
+    conteudo_mudou = Signal()
+
     def ir_para_linha(self, n: int, _coluna: int = 0) -> None:
         self.visor.ir_para_linha(n)
+
+    # Repasses da edicao. A janela fala com a VIEW registrada na aba, e nao com
+    # o visor de dentro -- ver `_no_editor` em `interface/janela.py`.
+    def editar_linha(self, n: int | None = None) -> bool:
+        return self.visor.editar_linha(n)
+
+    def inserir_linha(self) -> bool:
+        return self.visor.inserir_linha()
+
+    def remover_linha(self) -> bool:
+        return self.visor.remover_linha()
+
+    def duplicar_linha(self) -> bool:
+        return self.visor.duplicar_linha()
+
+    def desfazer(self) -> bool:
+        return self.visor.desfazer()
+
+    def refazer(self) -> bool:
+        return self.visor.refazer()
+
+    def confirmar_edicao(self) -> bool:
+        """Traz para a fonte o que estiver no campo aberto.
+
+        Chamada ANTES de salvar e de fechar, pelo mesmo motivo que a grade do CSV
+        tem `_sincronizar_visualizador`: o que esta' digitado e nao confirmado
+        seria perdido sem que nada avisasse.
+        """
+        return self.visor.confirmar_edicao()
 
     def atualizar_barras(self) -> None:
         self.visor.atualizar_barras()

@@ -187,9 +187,22 @@ planilha protegida por senha ou `.xls` antigo — essas abrem em somente leitura
 com o motivo, em vez de gravar errado.
 
 **Arquivo grande.** Acima de 20 MB (ou com uma linha acima de 20 mil caracteres) o
-arquivo abre num visor virtualizado, somente leitura, com índice esparso construído
-em thread. 178 MB abrem em **0,01 s**. Rolar, ir para linha, pesquisar e copiar
-continuam funcionando.
+arquivo abre num visor virtualizado, com índice esparso construído em thread.
+178 MB abrem em **0,01 s**. Rolar, ir para linha, pesquisar e copiar continuam
+funcionando.
+
+**E dá para editar.** O botão **Habilitar edição** na barra do topo liga a edição
+por linha: `F2` ou duplo clique edita a linha atual num campo sobreposto,
+`Ctrl+Enter` insere, `Ctrl+D` duplica, `Ctrl+Z` desfaz. O arquivo **continua fora
+da memória** — só as linhas alteradas ficam na RAM. Medido: 5 mil edições num
+arquivo de 30 MB custam menos de **2 MB**, e salvar tem pico de poucos MB, porque
+os trechos intocados vão do disco para o arquivo novo sem nunca virar texto.
+
+A edição não vem ligada de propósito: um log de produção aberto para consulta não
+deve virar editável por uma tecla distraída. Salvar exige espaço livre igual ao
+tamanho do arquivo (a gravação é atômica) e é recusado se outro programa tiver
+mexido no arquivo — inclusive quando a alteração preservou tamanho e data, que é o
+caso que passava despercebido antes.
 
 **Acompanhar log (tail).** Segue um `.log` que está sendo escrito, com pausar e
 retomar, detecção de truncamento e de rotação, e teto de memória automático.

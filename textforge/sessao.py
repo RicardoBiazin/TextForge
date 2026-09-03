@@ -213,6 +213,11 @@ class Recuperavel:
         return time.strftime("%d/%m/%Y %H:%M:%S", time.localtime(self.quando))
 
 
+#: Extensao do DIARIO de um arquivo grande. Nao e' `.conteudo` de proposito:
+#: o conteudo de um arquivo grande sao 240 MB, e o diario sao alguns KB.
+SUFIXO_DE_DIARIO = ".diario"
+
+
 def _pasta() -> pathlib.Path:
     return configuracao.pasta_de_recuperacao()
 
@@ -243,6 +248,12 @@ def gravar_copia(documento) -> pathlib.Path | None:
     """
     if not documento.modificado or documento.binario:
         return None
+    if getattr(documento, "edicao_grande_ligada", False):
+        # Um arquivo grande NAO pode ir por aqui: `bytes_para_salvar()`
+        # materializaria centenas de MB, e grava-los em %APPDATA% a cada
+        # intervalo de autosave seria pior que nao ter recuperacao nenhuma.
+        # O diario guarda o mesmo trabalho em alguns KB.
+        return gravar_diario(documento)
     ident = _identificador(documento)
     pasta = _pasta()
     try:
@@ -274,11 +285,98 @@ def gravar_copia(documento) -> pathlib.Path | None:
     return pasta / (ident + SUFIXO_DE_CONTEUDO)
 
 
+def gravar_diario(documento) -> pathlib.Path | None:
+    """Recuperacao de um arquivo GRANDE: as edicoes, e nao o conteudo.
+
+    Um `.xlsx` cabe na memoria; um log de 240 MB nao -- e e' exatamente por isso
+    que ele esta' em modo de arquivo grande. Copia-lo inteiro para %APPDATA% a
+    cada autosave transformaria a rede de seguranca no maior custo do programa.
+
+    O diario guarda a LISTA DE TRECHOS (ver `grande/edicao.py`), que descreve o
+    documento inteiro em O(edicoes) itens, mais as linhas digitadas. Dez mil
+    edicoes num arquivo de 240 MB dao alguns KB.
+
+    Guarda tambem a ASSINATURA do arquivo, com amostra das pontas. Reaplicar
+    trechos que apontam para offsets de um arquivo que mudou no disco escreveria
+    no lugar errado -- por isso a restauracao confere antes, e desiste em vez de
+    adivinhar.
+    """
+    from textforge import arquivos
+
+    fonte = documento.fonte_grande
+    if fonte is None or not fonte.alterado:
+        return None
+    ident = _identificador(documento)
+    pasta = _pasta()
+    assinatura = arquivos.Assinatura.de_caminho(
+        documento.caminho, amostrar=True) if documento.caminho else None
+
+    diario = {
+        "identificador": ident,
+        "caminho_original": str(documento.caminho or ""),
+        "nome": documento.nome,
+        "codec": documento.codec,
+        "fim_de_linha": documento.fim_de_linha,
+        "quando": time.time(),
+        "versao": VERSAO,
+        "assinatura": {
+            "tamanho": assinatura.tamanho if assinatura else 0,
+            "mtime_ns": assinatura.mtime_ns if assinatura else 0,
+            "amostra": assinatura.amostra if assinatura else "",
+        },
+        "trechos": fonte.diario(),
+        "adicionadas": fonte.linhas_adicionadas,
+    }
+    try:
+        (pasta / (ident + SUFIXO_DE_DIARIO)).write_text(
+            json.dumps(diario, ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        log.warning("falha ao gravar o diario de %s: %s", documento.nome, exc)
+        return None
+    return pasta / (ident + SUFIXO_DE_DIARIO)
+
+
+def ler_diario(caminho_do_arquivo) -> dict | None:
+    """O diario pendente deste arquivo, ou None. Nao confere a assinatura."""
+    import hashlib
+    ident = hashlib.sha256(
+        str(caminho_do_arquivo).lower().encode("utf-8")).hexdigest()[:16]
+    alvo = _pasta() / (ident + SUFIXO_DE_DIARIO)
+    if not alvo.exists():
+        return None
+    try:
+        return json.loads(alvo.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        log.warning("diario ilegivel em %s: %s", alvo, exc)
+        return None
+
+
+def diario_ainda_vale(diario: dict, caminho) -> bool:
+    """O arquivo no disco continua sendo aquele sobre o qual as edicoes foram feitas?
+
+    Um trecho diz "linhas 1.200.001 em diante do arquivo". Se o arquivo mudou,
+    essas linhas sao outras, e reaplicar escreveria conteudo certo em lugar
+    errado -- o defeito mais destrutivo que este mecanismo poderia ter.
+    """
+    from textforge import arquivos
+
+    guardada = diario.get("assinatura") or {}
+    agora = arquivos.Assinatura.de_caminho(pathlib.Path(caminho), amostrar=True)
+    if not agora.existe:
+        return False
+    if int(guardada.get("tamanho", -1)) != agora.tamanho:
+        return False
+    amostra = str(guardada.get("amostra", ""))
+    if amostra and agora.amostra:
+        return amostra == agora.amostra
+    return int(guardada.get("mtime_ns", -1)) == agora.mtime_ns
+
+
 def esquecer_copia(documento) -> None:
     """Apaga a copia de recuperacao -- chamado depois de salvar de verdade."""
     ident = _identificador(documento)
     pasta = _pasta()
-    for sufixo in (SUFIXO_DE_CONTEUDO, SUFIXO_DE_MANIFESTO):
+    for sufixo in (SUFIXO_DE_CONTEUDO, SUFIXO_DE_MANIFESTO, SUFIXO_DE_DIARIO):
         try:
             (pasta / (ident + sufixo)).unlink(missing_ok=True)
         except OSError:

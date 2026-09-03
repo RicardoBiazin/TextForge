@@ -109,6 +109,9 @@ class Documento(QObject):
 
     modificado_mudou = Signal(bool)
     metadados_mudaram = Signal()          # codificacao, EOL, linguagem, indentacao
+    #: O arquivo grande foi regravado: o mmap e o indice sao outros. Quem escuta
+    #: e' a `Aba`, que precisa reiniciar o `Indexador` sobre a fonte nova.
+    arquivo_grande_regravado = Signal()
 
     def __init__(self, cfg: dict[str, Any] | None = None) -> None:
         super().__init__()
@@ -386,10 +389,98 @@ class Documento(QObject):
 
         self.modo = MODO_GRANDE
         self.fonte_grande = FonteDeArquivo(alvo, perfil.codec)
+        # Somente leitura ate' o usuario clicar em "Habilitar edicao" na infobar
+        # (ver `habilitar_edicao_grande`). A edicao existe, mas e' um ato dele.
         self.aviso = (f"Arquivo grande ({tamanho / (1024 * 1024):.0f} MB): "
-                      "somente leitura")
+                      "somente leitura ate' habilitar a edicao")
         log.info("aberto em MODO GRANDE: %s (%d bytes, %s, %s)", alvo, tamanho,
                  perfil.rotulo, codificacao.ROTULO_EOL.get(self.fim_de_linha, "?"))
+
+    # ==================================================================
+    # Edicao de arquivo grande (etapa 14)
+    # ==================================================================
+
+    @property
+    def edicao_grande_ligada(self) -> bool:
+        return (self.modo == MODO_GRANDE and self.fonte_grande is not None
+                and self.fonte_grande.editavel())
+
+    def habilitar_edicao_grande(self) -> bool:
+        """Troca a fonte por uma `FonteEditavel`. Ato explicito do usuario.
+
+        Nao e' o estado inicial de proposito: um log de producao de 240 MB aberto
+        para consulta nao pode virar editavel por uma tecla distraida. Ver o
+        botao na infobar de `grande/visor.py`.
+
+        O `Indexador` guarda a `FonteDeArquivo` de DENTRO e continua varrendo o
+        arquivo sem saber de nada -- e' o que permite habilitar a edicao com a
+        indexacao ainda em curso.
+        """
+        from textforge.grande.edicao import FonteEditavel
+
+        if self.modo != MODO_GRANDE or self.fonte_grande is None:
+            return False
+        if self.fonte_grande.editavel():
+            return True
+        self.fonte_grande = FonteEditavel(self.fonte_grande)
+        self.somente_leitura = False
+        self.aviso = ""
+        self.metadados_mudaram.emit()
+        log.info("edicao habilitada em %s", self.caminho)
+        return True
+
+    def _salvar_arquivo_grande(self, alvo: pathlib.Path, *,
+                               forcar: bool = False) -> None:
+        """Grava por streaming e reabre o mmap sobre o arquivo novo.
+
+        `bytes_para_salvar()` NUNCA e' chamado aqui: ele devolveria os bytes do
+        `QTextDocument`, que em modo grande esta' vazio de proposito -- salvar
+        por ali gravaria um arquivo VAZIO por cima do original.
+
+        A ordem importa e e' imposta pelo Windows: escrever o temporario com o
+        mmap ABERTO (e' de onde vem cada trecho intocado), fechar o mmap, trocar,
+        reabrir. Um mmap vivo segura o arquivo e a troca falharia.
+        """
+        from textforge.fonte import FonteDeArquivo
+        from textforge.grande import gravacao
+
+        fonte = self.fonte_grande
+        if fonte is None or not fonte.editavel():
+            raise PermissionError("a edicao nao esta' habilitada neste arquivo")
+        if not fonte.indexacao_completa:
+            raise PermissionError(
+                "o arquivo ainda esta' sendo indexado. Salvar antes do fim "
+                "gravaria so' a parte ja' varrida.")
+
+        # A conferencia de alteracao externa usa a assinatura por AMOSTRA: acima
+        # de 8 MB nao ha' sha256, e so' tamanho + data deixaria passar uma
+        # reescrita que preservasse os dois (requisito 27).
+        if not forcar and self.assinatura is not None and self.caminho is not None:
+            agora = Assinatura.de_caminho(self.caminho, amostrar=True)
+            esperada = self.assinatura
+            if not esperada.amostra and agora.existe:
+                esperada = Assinatura(
+                    existe=esperada.existe, tamanho=esperada.tamanho,
+                    mtime_ns=esperada.mtime_ns, sha256=esperada.sha256,
+                    amostra=agora.amostra if (
+                        esperada.tamanho == agora.tamanho
+                        and esperada.mtime_ns == agora.mtime_ns) else "x")
+            if not esperada.compativel_com(agora):
+                raise AlteradoNoDisco(esperada, agora)
+
+        gravacao.gravar(alvo, fonte, eol=self.fim_de_linha, codec=self.codec)
+
+        # Reabrir e reindexar. O indice novo NAO e' construido durante a escrita:
+        # seria aritmetica de offset delicada para poupar uma varredura de poucos
+        # segundos que ja' roda em thread, com progresso, e que e' o mesmo codigo
+        # de toda abertura.
+        nova = FonteDeArquivo(alvo, self.codec)
+        fonte.trocar_fonte(nova)
+        fonte.confirmar_gravacao()
+        self.caminho = alvo
+        self.assinatura = Assinatura.de_caminho(alvo, amostrar=True)
+        self.qt.setModified(False)
+        self.arquivo_grande_regravado.emit()
 
     def fechar(self) -> None:
         """Libera o mmap do modo de arquivo grande. Idempotente.
@@ -594,6 +685,13 @@ class Documento(QObject):
         """
         if self.planilha is not None:
             return self.planilha.bytes_para_salvar()
+        if self.modo == MODO_GRANDE:
+            # Materializar 240 MB aqui anularia o modo inteiro -- e ler o
+            # QTextDocument vazio gravaria um arquivo de zero byte. Quem grava
+            # arquivo grande e' `_salvar_arquivo_grande`, por streaming.
+            raise PermissionError(
+                "arquivo grande nao passa por bytes_para_salvar(): use "
+                "_salvar_arquivo_grande()")
 
         texto = self.texto()
 
@@ -658,6 +756,9 @@ class Documento(QObject):
         """
         if self.caminho is None:
             raise ValueError("documento sem caminho: use salvar_como()")
+        if self.edicao_grande_ligada:
+            self._salvar_arquivo_grande(self.caminho, forcar=forcar)
+            return
         if self.somente_leitura and not forcar:
             raise PermissionError(self.aviso or "documento em somente leitura")
 
@@ -674,6 +775,19 @@ class Documento(QObject):
     def salvar_como(self, caminho: str | os.PathLike[str], *,
                     substituir_incompativeis: bool = False) -> None:
         alvo = pathlib.Path(caminho)
+        if self.modo == MODO_GRANDE:
+            # DEFEITO CORRIGIDO: sem este desvio, "Salvar como" num arquivo
+            # grande chamava `bytes_para_salvar()` -- que le' o QTextDocument
+            # VAZIO -- e gravava um arquivo de zero byte, sem nenhum aviso.
+            if not self.edicao_grande_ligada:
+                raise PermissionError(
+                    "este arquivo esta' aberto em modo de arquivo grande, "
+                    "somente leitura. Habilite a edicao para poder salva-lo.")
+            self._salvar_arquivo_grande(alvo, forcar=True)
+            self.rotulo_sem_titulo = ""
+            self.somente_leitura = False
+            self.metadados_mudaram.emit()
+            return
         dados = self.bytes_para_salvar(substituir=substituir_incompativeis)
         arquivos.gravar_atomico(alvo, dados)
         if self.planilha is not None:

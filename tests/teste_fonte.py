@@ -205,7 +205,8 @@ with pasta_temporaria() as pasta:
         checa(f.indexacao_completa, "indexacao_completa fica True no fim")
         checa_igual(f.tamanho_em_bytes(), arq.stat().st_size,
                     "tamanho_em_bytes bate com o do disco")
-        checa(not f.editavel(), "arquivo grande NAO e' editavel na v1")
+        checa(not f.editavel(), "FonteDeArquivo crua NAO e' editavel: quem escreve e' a "
+      "FonteEditavel por cima dela (ver grande/edicao.py)")
 
 # ---------------------------------------------------------------------------
 secao("5 - indexacao incremental e cancelavel")

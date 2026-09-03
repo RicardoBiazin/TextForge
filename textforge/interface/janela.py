@@ -27,7 +27,7 @@ from textforge import (APP, AUTOR, LINKEDIN, VERSAO, arquivos, busca,
                        configuracao, log_interno, recursos,
                        sessao as sessao_mod)
 from textforge import busca_em_arquivos as bfa
-from textforge.documento import MODO_PLANILHA, Documento
+from textforge.documento import MODO_GRANDE, MODO_PLANILHA, Documento
 from textforge.editor.indentacao import Indentacao
 from textforge.interface import acoes, dialogos
 from textforge.interface import tema as tema_mod
@@ -174,6 +174,16 @@ class JanelaPrincipal(QMainWindow):
     # O resto (desfazer, colar, duplicar linha, indentar, marcadores) e' edicao.
     SO_LEITURA_NA_VIEW = {"copy": "copiar", "selectAll": "selecionar_tudo"}
 
+    # Comandos do editor de texto que a view "grande" EDITAVEL sabe atender.
+    # Sao os mesmos itens de menu e os mesmos atalhos: Ctrl+Z, Ctrl+Y e Ctrl+D
+    # passam a valer no visor sem inventar atalho novo para o usuario decorar.
+    EDICAO_NA_VIEW_GRANDE = {
+        "undo": "desfazer",
+        "redo": "refazer",
+        "duplicar_linha": "duplicar_linha",
+        "excluir_linha": "remover_linha",
+    }
+
     def _no_editor(self, nome_do_metodo: str) -> None:
         """Executa um metodo do editor -- ou o equivalente da VIEW ATIVA.
 
@@ -196,6 +206,12 @@ class JanelaPrincipal(QMainWindow):
             return
 
         widget = aba.view(view)
+        if view == "grande" and getattr(widget, "editavel", False):
+            metodo = self.EDICAO_NA_VIEW_GRANDE.get(nome_do_metodo)
+            if metodo is not None:
+                getattr(widget, metodo)()
+                self._mostrar_metadados()
+                return
         equivalente = self.SO_LEITURA_NA_VIEW.get(nome_do_metodo)
         if equivalente is not None:
             alvo = getattr(widget, "visor", widget)      # o painel embrulha o visor
@@ -765,6 +781,13 @@ class JanelaPrincipal(QMainWindow):
         self._sincronizar_visualizador()
         if doc.caminho is None:
             return self.salvar_como()
+        if doc.modo == MODO_GRANDE and not doc.edicao_grande_ligada:
+            dialogos.avisar(
+                self, f"{doc.nome} esta' aberto em modo de arquivo grande.",
+                "Ele abre somente leitura para nao consumir varios GB de RAM. "
+                "Use <b>Habilitar edicao</b> na barra amarela do topo para "
+                "editar linha a linha.")
+            return False
         if doc.somente_leitura:
             dialogos.avisar(self, "Este documento esta' em somente leitura.",
                             doc.aviso)
@@ -840,6 +863,15 @@ class JanelaPrincipal(QMainWindow):
     def salvar_como(self) -> bool:
         doc = self.abas.documento_atual()
         if doc is None:
+            return False
+        if doc.modo == MODO_GRANDE and not doc.edicao_grande_ligada:
+            # DEFEITO CORRIGIDO: sem esta guarda, "Salvar como" num arquivo
+            # grande gravava um arquivo VAZIO -- `bytes_para_salvar()` le' o
+            # QTextDocument, que em modo grande fica vazio de proposito.
+            dialogos.avisar(
+                self, f"{doc.nome} esta' aberto em modo de arquivo grande.",
+                "Use <b>Habilitar edicao</b> na barra amarela do topo antes de "
+                "salvar uma copia.")
             return False
         sugestao = str(doc.caminho) if doc.caminho else doc.nome
         caminho, _ = QFileDialog.getSaveFileName(
@@ -1283,6 +1315,15 @@ class JanelaPrincipal(QMainWindow):
         """
         aba = aba if aba is not None else self.abas.aba_atual()
         if aba is None:
+            return
+        if aba.view_atual() == "grande":
+            # O campo sobreposto pode estar aberto com texto digitado e nao
+            # confirmado. Trazer isso para a fonte ANTES de salvar ou fechar e'
+            # o mesmo cuidado que a grade do CSV tem: o que foi digitado nao
+            # pode sumir sem aviso.
+            painel = aba.view("grande")
+            if painel is not None and getattr(painel, "editavel", False):
+                painel.confirmar_edicao()
             return
         if aba.view_atual() == "planilha":
             # Nada a sincronizar: o modelo da grade escreve DIRETO na `Pasta`, e

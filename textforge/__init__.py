@@ -4,6 +4,9 @@ Editor de texto, codigo-fonte, configuracao e dados: txt, csv, log, ini, json,
 xml, yaml, py, php, js, ts, html, css, sql, md, bat, ps1, sh, java, c, cpp, go,
 rs, dat. NAO e' editor de documentos ricos -- doc/docx estao fora de escopo.
 
+Arquivo grande (acima de 20 MB) abre num visor virtualizado e pode ser EDITADO
+linha a linha, sem sair do disco: ver `textforge/grande/edicao.py`.
+
 Planilha (xlsx, xlsm) e' a excecao, e uma excecao ESTREITA: da' para ver e
 editar o VALOR das celulas numa grade, e nada mais. Formato, grafico, tabela
 dinamica e macro nao sao editaveis -- mas sobrevivem intactos ao salvar, porque
@@ -23,7 +26,7 @@ APP = "TextForge"
 # de "Abrir com" quebra em silencio.
 APP_ARQUIVO = "TextForge"
 
-VERSAO = "0.2.1"
+VERSAO = "0.3.0"
 AUTOR = "Ricardo Biazin"
 
 # Perfil do autor, mostrado como link no dialogo Sobre. VAZIO nao quebra nada: o

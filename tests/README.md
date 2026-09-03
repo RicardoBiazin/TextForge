@@ -61,6 +61,7 @@ para rodar; sem PySide6 ela imprime **PULADO** em vez de falhar.
 | `teste_csv.py` | dialeto, registro multi-linha, **`para_texto()` sem edição idêntico**, parse lazy | PySide6 |
 | `teste_indice_grande.py` | índice esparso em 20 pontos, **padrão na fronteira de bloco**, teto de RAM, visor, cancelamento | PySide6, ~200 MB em `%TEMP%` |
 | `teste_tail.py` | leitura incremental, **multibyte cortado**, linha parcial, truncamento, rotação, pausar/retomar | PySide6 |
+| `teste_edicao_grande.py` | tabela de trechos sobre mmap, gravação por streaming, **memória O(edições)**, editar com índice incompleto, assinatura por amostra | PySide6 para a parte de `Documento`/visor |
 | `teste_xlsx.py` | **patch sem perder gráfico/macro**, tipos de célula, `<dimension>` mentiroso, fórmula compartilhada, recusas | openpyxl; a parte de `Documento` pede PySide6 |
 | `teste_conversoes.py` | Base64/URL/HTML/JSON, tolerâncias do Base64, e o peso da **codificação** | nada |
 | `teste_hash.py` | digests contra **valores publicados**, leitura em blocos, texto x arquivo | nada |
@@ -144,6 +145,17 @@ quebrar, leia o comentário no código antes de "consertar" o teste.
   geram planilha o escrevem estreito demais. Sem o `reset_dimensions()` do
   `leitor.py`, uma coluna inteira que **existe** no arquivo simplesmente não
   apareceria na grade, e nada avisaria.
+- **`teste_edicao_grande.py`, "a memória acompanha as EDIÇÕES".** Foi este teste
+  que pegou o defeito real do desenho: guardar um instantâneo da lista de trechos
+  por operação fazia 10 mil edições num arquivo de 59 MB custarem **800 MB** de
+  RAM. O custo era quadrático e invisível em qualquer teste funcional — todos
+  passavam. Se este teste quebrar, alguém trocou as operações inversas por cópias
+  de estado.
+- **`teste_edicao_grande.py`, "editar com a indexação ainda em curso".** A thread
+  de disco continua contando linhas enquanto o usuário edita o começo do arquivo.
+  A invariante do trecho ABERTO (no máximo um, sempre no fim) é o que mantém as
+  duas coisas coerentes; um `_partir` que feche o último trecho quebra isto e o
+  documento para de crescer com a indexação.
 - **`teste_csv.py`, "Registro não é linha".** Um campo entre aspas pode conter
   `\n`. Dividir o CSV por linha parte o registro ao meio e desloca a tabela
   inteira dali para a frente. `dividir_registros` varre respeitando as aspas, e a
