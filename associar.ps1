@@ -41,7 +41,16 @@
     não sai de um script — e prometer o contrário seria enganar quem lê.
 #>
 
-[CmdletBinding()]
+# `PositionalBinding = $false` NAO e' enfeite.
+#
+# Um parametro com `ValueFromRemainingArguments` fica DE FORA da ligacao
+# posicional. Sem esta linha, `$Exe` vira o primeiro posicional e um
+# `.\associar.ps1 .log .xml` silenciosamente entende `.log` como o CAMINHO DO
+# EXECUTAVEL -- e o script responde "nao encontrei o TextForge.exe" sem dar a
+# menor pista de por que, mandando quem le' construir o .exe de novo. Com ela,
+# so' o que tem `Position` explicito liga por posicao, e o resto cai em
+# `$Extensoes`.
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]] $Extensoes,
@@ -53,29 +62,48 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgID  = "TextForge.arquivo"
 $AppExe  = "TextForge.exe"
-$Raiz    = Split-Path -Parent $MyInvocation.MyCommand.Path
+# `$PSScriptRoot` e' o jeito certo desde o PowerShell 3.0. O
+# `$MyInvocation.MyCommand.Path` vem VAZIO em varias formas de invocacao
+# (dot-sourcing, `&`, chamada por outro processo), e ai' o script procura o
+# executavel a partir de uma raiz em branco e jura que nao achou.
+$Raiz = $PSScriptRoot
+if (-not $Raiz) { $Raiz = Split-Path -Parent $MyInvocation.MyCommand.Definition }
+if (-not $Raiz) { $Raiz = (Get-Location).Path }
 
 function Escrever($mensagem, $cor = "Gray") {
     Write-Host $mensagem -ForegroundColor $cor
 }
 
+# `-LiteralPath` EM TODA CHAMADA, e nao por preciosismo.
+#
+# O menu de contexto mora em `HKCU:\Software\Classes\*\shell\...`, e esse `*`
+# e' o nome LITERAL da chave que o Windows usa para "qualquer arquivo". Sem
+# `-LiteralPath`, o provedor de registro do PowerShell trata o `*` como CURINGA
+# e sai varrendo as milhares de chaves de Software\Classes atras de um
+# casamento -- o script parece travado, e a chave nunca e' criada.
 function Definir-Chave($caminho, $nome, $valor) {
     if ($Simular) {
         Escrever "  [simulacao] $caminho :: $(if ($nome) { $nome } else { '(padrao)' }) = $valor"
         return
     }
-    if (-not (Test-Path $caminho)) { New-Item -Path $caminho -Force | Out-Null }
+    if (-not (Test-Path -LiteralPath $caminho)) {
+        # `New-Item` NAO aceita -LiteralPath no provedor de registro, e com `*`
+        # no caminho ele globa do mesmo jeito. A saida e' a API do .NET, que
+        # trata o caminho como texto puro.
+        [void][Microsoft.Win32.Registry]::CurrentUser.CreateSubKey(
+            $caminho.Replace("HKCU:\", ""))
+    }
     if ($nome) {
-        New-ItemProperty -Path $caminho -Name $nome -Value $valor -PropertyType String -Force | Out-Null
+        New-ItemProperty -LiteralPath $caminho -Name $nome -Value $valor -PropertyType String -Force | Out-Null
     } else {
-        Set-ItemProperty -Path $caminho -Name "(default)" -Value $valor -Force
+        Set-ItemProperty -LiteralPath $caminho -Name "(default)" -Value $valor -Force
     }
 }
 
 function Remover-Chave($caminho) {
-    if (-not (Test-Path $caminho)) { return }
+    if (-not (Test-Path -LiteralPath $caminho)) { return }
     if ($Simular) { Escrever "  [simulacao] remover $caminho"; return }
-    Remove-Item -Path $caminho -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $caminho -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 function Atualizar-Explorer {
@@ -111,13 +139,13 @@ if ($Remover) {
         Where-Object { $_.PSChildName -like ".*" } |
         ForEach-Object {
             $alvo = "HKCU:\Software\Classes\$($_.PSChildName)\OpenWithProgids"
-            if (Test-Path $alvo) {
-                $prop = Get-ItemProperty -Path $alvo -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $alvo) {
+                $prop = Get-ItemProperty -LiteralPath $alvo -ErrorAction SilentlyContinue
                 if ($prop -and ($prop.PSObject.Properties.Name -contains $ProgID)) {
                     if ($Simular) {
                         Escrever "  [simulacao] tirar $ProgID de $($_.PSChildName)"
                     } else {
-                        Remove-ItemProperty -Path $alvo -Name $ProgID -Force -ErrorAction SilentlyContinue
+                        Remove-ItemProperty -LiteralPath $alvo -Name $ProgID -Force -ErrorAction SilentlyContinue
                     }
                     $limpas++
                 }

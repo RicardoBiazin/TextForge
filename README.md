@@ -129,6 +129,27 @@ Escreve **apenas em HKCU** — sem administrador. Usa `OpenWithProgids`, que
 mais opções"*. O menu novo exige uma extensão de shell `IExplorerCommand`
 empacotada em MSIX, e isso não sai de um script.
 
+O **programa padrão** também não sai daqui, e não é limitação de implementação:
+desde o Windows 10 o `UserChoice` de cada extensão é protegido por um hash
+amarrado ao seu usuário, à extensão e ao horário — escrever ali direto é
+revertido pelo sistema. Forjar esse hash é o que fazem as ferramentas de
+sequestro de associação. Para tornar o TextForge padrão, é uma vez por extensão
+em *Abrir com → Escolher outro aplicativo → Sempre*.
+
+Duas armadilhas do PowerShell estão travadas por teste em
+`teste_empacotamento.py`, porque as duas quebram o script **em silêncio** —
+estiveram aqui de verdade, e juntas faziam o script nunca chegar ao fim:
+
+- Um parâmetro com `ValueFromRemainingArguments` fica **fora** da ligação
+  posicional. Sem `PositionalBinding = $false`, `.ssociar.ps1 .log .xml` lê
+  `.log` como o *caminho do executável* — e o script responde "não encontrei o
+  TextForge.exe", mandando quem lê construir o `.exe` de novo.
+- O menu de contexto mora numa chave chamada `*`, e o provedor de registro do
+  PowerShell trata isso como **curinga**: sem `-LiteralPath` ele varre as
+  milhares de chaves de `Software\Classes` e o script parece travado. O
+  `New-Item` piora, porque nem aceita `-LiteralPath` no provedor de registro —
+  daí a chamada direta a `Registry.CurrentUser.CreateSubKey`.
+
 ---
 
 ## O que ele faz

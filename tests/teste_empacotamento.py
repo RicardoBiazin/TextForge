@@ -279,6 +279,44 @@ def testar_associar_ps1() -> None:
     checa("Mostrar mais op" in texto,
           "e avisa que no Windows 11 o item fica em 'Mostrar mais opcoes'")
 
+    # ------------------------------------------------------------------
+    # As duas armadilhas do PowerShell que quebram o script EM SILENCIO.
+    #
+    # As duas estiveram aqui de verdade, e juntas faziam o script nunca chegar
+    # ao fim -- por isso a maquina do autor tinha apenas o
+    # `Applications\TextForge.exe` que o dialogo do Explorer cria, e nenhum
+    # ProgID. Um `-Simular` disfarca a segunda, entao so' este teste guarda.
+    # ------------------------------------------------------------------
+
+    # Um parametro com `ValueFromRemainingArguments` fica DE FORA da ligacao
+    # posicional. Sem isto, `$Exe` vira o primeiro posicional e
+    # `.ssociar.ps1 .log .xml` le' `.log` como o CAMINHO DO EXECUTAVEL --
+    # e o script responde "nao encontrei o TextForge.exe", mandando quem le'
+    # construir o .exe de novo.
+    checa("PositionalBinding = $false" in texto,
+          "*** PositionalBinding = $false: sem ele a primeira extensao vira "
+          "silenciosamente o caminho do executavel ***")
+
+    # O menu de contexto mora numa chave chamada `*`, e o provedor de registro
+    # do PowerShell trata isso como CURINGA: sem `-LiteralPath` ele varre as
+    # milhares de chaves de Software\Classes e o script parece travado.
+    for chamada in ("Test-Path -LiteralPath", "Set-ItemProperty -LiteralPath",
+                    "New-ItemProperty -LiteralPath",
+                    "Remove-Item -LiteralPath"):
+        checa(chamada in texto,
+              f"*** usa `{chamada}`: a chave `*` seria tratada como curinga ***")
+    checa("New-Item -Path $caminho" not in texto,
+          "*** e NAO usa `New-Item -Path` no caminho da chave `*`, que globa "
+          "do mesmo jeito (dai' o CreateSubKey do .NET) ***")
+    checa("CreateSubKey" in texto,
+          "criando a chave pela API do .NET, que trata o caminho como texto")
+
+    # `$MyInvocation.MyCommand.Path` vem VAZIO em varias formas de invocacao.
+    checa("$PSScriptRoot" in texto,
+          "*** acha a propria pasta por $PSScriptRoot, e nao por "
+          "$MyInvocation.MyCommand.Path, que vem vazio quando o script e' "
+          "chamado por outro processo ***")
+
 
 def testar_imports_proibidos() -> None:
     secao("*** Nenhum modulo importa Qt que nao empacotamos ***")
